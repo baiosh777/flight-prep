@@ -1,0 +1,15 @@
+{
+  "name": "Flight Prep",
+  "short_name": "Flight Prep",
+  "description": "Offline flight preparation companion: flight clock, next action, waypoint tracker, call deadlines, fuel check and the briefing package.",
+  "start_url": "./#now",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#11141a",
+  "theme_color": "#181c24",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flight Prep</title>
+<meta name="description" content="Offline flight preparation companion: flight clock, next action, waypoint tracker, call deadlines, fuel check and the briefing package.">
+<meta name="theme-color" content="#181c24">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flight Prep">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top" id="top">
+ <div class="row1">
+  <span class="cs" id="cs" title="ATC call sign">FLIGHT PREP</span>
+  <span class="fl"><b id="fl-b">No flight loaded</b><small id="fl-small">Load a flight file in FLIGHTS</small></span>
+  <span class="utc"><small>UTC</small><b id="utc">--:--:--</b></span>
+ </div>
+ <div class="row2">
+  <button type="button" id="airborne" class="air">AIRBORNE NOW</button>
+  <label class="to"><small>T/O</small><input id="to-input" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="HHMM" aria-label="Take-off time UTC, HHMM"><small>Z</small></label>
+  <span class="el"><small id="el-lab">ELAPSED</small><b id="elapsed">-:--</b></span>
+  <span class="eta"><small>ETA</small><b id="eta">----Z</b></span>
+ </div>
+ <div id="confirm" class="confirm" hidden><span id="confirm-text"></span><button type="button" id="confirm-yes">Replace</button><button type="button" id="confirm-no">Keep</button></div>
+ <nav class="tabs" id="tabs" aria-label="Sections"></nav>
+</header>
+<main id="main">
+<section id="v-now" class="view" data-view="now" hidden>
+ <div id="planbanner" class="banner"></div>
+ <div id="nextaction" class="nextaction"></div>
+ <div id="nowcards" class="nowcards"></div>
+ <div class="bar"><span>Flight timeline</span><small>FIRs · ETOPS · calls (dots) · events (ticks) · now</small></div>
+ <div class="tw"><svg id="timeline" viewBox="0 0 1000 96" class="timeline" role="img" aria-label="Flight timeline"></svg></div>
+ <div class="tools"><button type="button" id="wake">Keep screen on: off</button><button type="button" id="theme">Theme: auto</button></div>
+</section>
+<section id="v-waypoints" class="view" data-view="waypoints" hidden>
+ <div id="wpt-static"></div>
+ <div class="wptbar"><span><b>Tap a row when you pass it.</b> Passed rows dim; the next one is framed in magenta. Tap a dimmed row to step back to it.</span>
+  <button type="button" id="undo">Undo last</button><button type="button" id="reset">Reset</button></div>
+ <div class="tw"><table class="wpt" id="wpt"><thead><tr><th>EET</th><th>Waypoint</th><th>FIR</th><th>Call / frequency</th><th>CPDLC</th><th>Special requirements</th><th>Threat</th><th>Divert</th><th>MORA</th><th>Fuel t<br>min / plan</th></tr></thead><tbody></tbody></table></div>
+ <p class="note">MORA: amber above 5000 ft, red above 10000 ft. Fuel plan = OFP minimum remaining + EXTRA + CONT. ▶ = FIR boundary (FPL EET). DUE = the planned time has passed but the row is not ticked.</p>
+</section>
+<section id="v-calls" class="view" data-view="calls" hidden></section>
+<section id="v-fuel" class="view" data-view="fuel" hidden>
+ <h1 class="pt">Fuel check</h1><p class="sub" id="fuel-sub"></p>
+ <div class="tw"><table class="fuel" id="fuel"><thead><tr><th>EET</th><th>Point</th><th>Min</th><th>Plan</th><th>Actual t</th><th>vs min</th><th>vs plan</th><th>Landing fuel</th></tr></thead><tbody></tbody></table></div>
+</section>
+<div id="static-views"></div>
+<section id="v-flights" class="view" data-view="flights" hidden>
+ <h1 class="pt">Flights</h1>
+ <p class="sub">Flights are stored on this iPad only. Everything works without internet once a flight is loaded.</p>
+ <div><label class="load">Load flight file<input type="file" id="load-file" accept=".json,application/json"></label></div>
+ <div id="load-msg" class="msg" hidden></div>
+ <div id="flist" class="flights"></div>
+ <div class="bar"><span>How to use</span><small>offline</small></div>
+ <ol class="steps">
+  <li>Claude sends a flight file for every flight (for example <b>EK794_NBJ-DXB_flight.json</b>). Save it to the Files app.</li>
+  <li>Tap <b>Load flight file</b> and pick it. The app opens the flight on the NOW screen.</li>
+  <li>At take-off tap <b>AIRBORNE NOW</b> (or type the time). Tap waypoint rows as you pass them; tap <b>Done</b> on calls.</li>
+  <li>Your take-off time, ticks and fuel entries stay on this iPad, per flight.</li>
+ </ol>
+ <p class="note" id="app-info"></p>
+</section>
+</main>
+<footer class="foot" id="foot">Preparation aid only – the OFP, official Emirates documentation and ATC prevail. Times are planned EETs from the T/O time you set; the app does not know the aircraft position.</footer>
+<div id="update" class="update" hidden><span>A new version of Flight Prep is ready.</span><button type="button" id="update-btn">Update now</button></div>
+<script src="fp_live.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
