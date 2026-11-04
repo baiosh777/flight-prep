@@ -1,7 +1,7 @@
 /* Flight Prep - offline app shell. Stores flight files in IndexedDB, mounts the current flight, then hands over to FPLive (fp_live.js). */
 (function () {
   'use strict';
-  var APP_VERSION = '1.0.0 (05 NOV 2026)';
+  var APP_VERSION = '1.1.0 (05 NOV 2026)';
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -99,22 +99,13 @@
     ev.target.value = '';
   });
 
-  /* ---------- mount a flight, then start the live layer */
-  function mount(rec) {
-    document.title = rec.title + ' · Flight Prep';
-    $('cs').textContent = rec.header.callsign; $('fl-b').textContent = rec.header.fltxt; $('fl-small').textContent = rec.header.sub;
-    $('planbanner').innerHTML = rec.planbanner; $('wpt-static').innerHTML = rec.wpt_static; $('v-calls').innerHTML = rec.calls; $('fuel-sub').innerHTML = rec.fuel_sub;
-    var sv = '';
-    rec.tabs.forEach(function (t) { if (rec.views[t[0]]) sv += '<section id="v-' + t[0] + '" class="view" data-view="' + t[0] + '" hidden>' + rec.views[t[0]] + '</section>'; });
-    $('static-views').outerHTML = sv;
-    $('tabs').innerHTML = rec.tabs.map(function (t) { return '<a href="#' + t[0] + '" data-v="' + t[0] + '">' + esc(t[1]) + '</a>'; }).join('') + '<a href="#flights" data-v="flights">FLIGHTS</a>';
-    $('foot').textContent = rec.foot.replace(/<[^>]+>/g, '');
-    window.FPLive(rec.data);
-  }
+  /* ---------- mount a flight (fp_mount.js), then the live layer starts */
+  function mount(rec) { window.FPMount(rec, { app: true }); }
   function empty() {
     document.body.classList.add('empty'); $('top').classList.add('empty');
     $('tabs').innerHTML = '<a href="#flights" data-v="flights" class="on">FLIGHTS</a>';
     document.querySelectorAll('.view').forEach(function (v) { v.hidden = v.dataset.view !== 'flights'; });
+    try { var p = JSON.parse(lsGet('fpapp:prefs') || '{}'); if (p.theme === 'dark' || p.theme === 'light') document.documentElement.setAttribute('data-theme', p.theme); } catch (e) { }
     function utc() { var d = new Date(), p = function (n) { return String(n).padStart(2, '0'); }; $('utc').textContent = p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()); }
     utc(); setInterval(utc, 1000);
   }
