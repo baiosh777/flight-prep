@@ -30,7 +30,7 @@ window.FPTools = function (A) {
     if (opt.after) opt.after(SB);
     var f = SB.querySelector('[autofocus]'); if (f) setTimeout(function () { f.focus(); }, 60);
   }
-  function rerender() { if (!sheet) return; var y = SB.scrollTop; SB.innerHTML = sheet.render(); SB.scrollTop = y; }
+  function rerender() { if (!sheet) return; var y = SB.scrollTop, op = [].map.call(SB.querySelectorAll('details[data-icao][open]'), function (d) { return d.dataset.icao; }); SB.innerHTML = sheet.render(); op.forEach(function (ic) { var d = SB.querySelector('details[data-icao="' + ic + '"]'); if (d) d.open = true; }); SB.scrollTop = y; }
   function closeSheet() { SH.hidden = true; BG.hidden = true; sheet = null; document.documentElement.classList.remove('noscroll'); }
   X.openSheet = openSheet; X.closeSheet = closeSheet; X.rerender = rerender;
   on('sheet-x', 'click', closeSheet); on('sheet-bg', 'click', closeSheet);
@@ -53,8 +53,14 @@ window.FPTools = function (A) {
     A.save(); A.tick(true); if (sheet && sheet.kind === 'timers') rerender();
   }
   function leftTxt(id) { var t = tById(id); if (!t) return ''; var l = tLeft(t); return l > 0 ? 'in ' + A.mmss(l) : 'DUE +' + A.mmss(-l); }
+  function fcBlock() {   // v2.0: the fuel check timer lives here (no header button any more)
+    var l = A.fcLeft ? A.fcLeft() : null, cls = l === null ? '' : (l <= 0 ? 'red' : (l <= 300 ? 'amb' : ''));
+    return '<div class="tmr tfc ' + cls + '"><div><b>Fuel check</b><small>55-min timer · tap after each fuel check' + (S.fc ? ' · last ' + A.isoZ(S.fc) : '') + '</small></div>' +
+      '<span class="tmc" data-tmfc="1">' + (l === null ? 'not running' : (l > 0 ? 'in ' + A.mmss(l) : 'DUE +' + A.mmss(-l))) + '</span><div class="tmb2"><button type="button" data-act="fc" class="pri">' + (l === null ? 'Start 55:00' : 'Done · restart') + '</button>' +
+      (l !== null ? '<button type="button" data-act="x-fcstop">Stop</button>' : '') + '</div></div>';
+  }
   function timersHtml() {
-    var h = '<div class="tml">' + (S.timers.length ? S.timers.slice().sort(function (a, b) { return a.end - b.end; }).map(function (t) {
+    var h = fcBlock() + '<div class="tml">' + (S.timers.length ? S.timers.slice().sort(function (a, b) { return a.end - b.end; }).map(function (t) {
       var l = tLeft(t);
       return '<div class="tmr ' + (l <= 0 ? 'red' : (l <= 120 ? 'amb' : '')) + '"><div><b>' + esc(t.name) + '</b><small>' + (t.rep ? 'every ' + t.min + ' min' : (t.min ? t.min + ' min' : 'at ' + A.isoZ(new Date(t.end).toISOString()))) + ' · due ' + A.isoZ(new Date(t.end).toISOString()) + '</small></div>' +
         '<span class="tmc" data-tml="' + t.id + '">' + leftTxt(t.id) + '</span><div class="tmb2"><button type="button" data-act="tm" data-id="' + t.id + '">' + (t.rep ? 'Done · restart' : 'Done') + '</button>' +
@@ -66,7 +72,20 @@ window.FPTools = function (A) {
       '<p class="note">Timers show in the alert bar (2 min before and when due), in Up next and on NOW, and chime when due if sound alerts are on. Stored per flight on this iPad.</p>';
     return h;
   }
-  function openTimers() { openSheet('timers', 'Timers', timersHtml, { tick: function () { SB.querySelectorAll('[data-tml]').forEach(function (s) { s.textContent = leftTxt(s.dataset.tml); }); } }); }
+  function openTimers() { openSheet('timers', 'Timers', timersHtml, { tick: function () { SB.querySelectorAll('[data-tml]').forEach(function (s) { s.textContent = leftTxt(s.dataset.tml); });
+    var f = SB.querySelector('[data-tmfc]'); if (f) { var l = A.fcLeft(); if ((l === null) !== (f.textContent === 'not running') || (l !== null && SB.querySelector('.tfc button.pri').textContent !== 'Done · restart')) { rerender(); return; } f.textContent = l === null ? 'not running' : (l > 0 ? 'in ' + A.mmss(l) : 'DUE +' + A.mmss(-l)); } } }); }
+  /* v2.0: running timers (fuel check + own timers) as chips in the header - tap = Timers */
+  var TMX = $('tmx'), tmxKey = '';
+  function paintTmx() {
+    if (!TMX) return;
+    var L = [], fl = A.fcLeft ? A.fcLeft() : null;
+    if (fl !== null) L.push({ id: 'fc', n: 'FUEL CHECK', l: fl, amb: 300 });
+    S.timers.slice().sort(function (a, b) { return a.end - b.end; }).slice(0, 3).forEach(function (t) { L.push({ id: t.id, n: t.name.toUpperCase(), l: tLeft(t), amb: 120 }); });
+    var key = L.map(function (x) { return x.id; }).join('|');
+    if (key !== tmxKey) { tmxKey = key; TMX.innerHTML = L.map(function (x) { return '<button type="button" class="tmxc" data-act="x-timers" data-k="' + esc(x.id) + '"><small>' + esc(x.n) + '</small><b></b></button>'; }).join(''); }
+    L.forEach(function (x) { var b = TMX.querySelector('[data-k="' + x.id + '"]'); if (!b) return; b.querySelector('b').textContent = x.l > 0 ? A.mmss(x.l) : 'DUE +' + A.mmss(-x.l); b.className = 'tmxc' + (x.l <= 0 ? ' red' : (x.l <= x.amb ? ' amb' : '')); });
+    TMX.hidden = !L.length;
+  }
   on('b-timer', 'click', openTimers);
   var fired = {};
   function tmAlerts() {
@@ -136,9 +155,10 @@ window.FPTools = function (A) {
         'TOD ' + zt(td) + ' · ATIS ' + zt(td - 30) + ' · approach brief ' + zt(td - 20) + ' · land ' + zt(T)));
     }
     if (T2 && T2.cards) T2.cards(e, C, card);
+    if (window.FPReturn && e > T - 90) C.push(card('ret', 'Turnaround – return flight', esc(window.FPReturn.title.split(' ').slice(0, 2).join(' ')), 'mag', 'Saved on this iPad: ' + esc(window.FPReturn.title) + '. Open it after landing – this flight stays stored.', '<button type="button" class="cbtn" data-act="x-ret">Open return flight</button>'));
     if (S.pins.length) C.push(card('pin', 'Pinned', S.pins.length + (S.pins.length === 1 ? ' item' : ' items'), '',
       '', '<ul class="pins">' + S.pins.map(function (p, i) { return '<li><a href="#' + p.v + '" data-act="x-pgo" data-i="' + i + '">' + esc(p.t.length > 140 ? p.t.slice(0, 140) + '…' : p.t) + '</a><button type="button" data-act="x-unpin" data-i="' + i + '" aria-label="Unpin">✕</button></li>'; }).join('') + '</ul>'));
-    if (S.mel.length) C.push(card('mel', 'MEL items', S.mel.length + ' open', 'amb', S.mel.map(function (m) { return esc(m.no) + ' ' + esc(m.title); }).join(' · '), '<button type="button" class="cbtn" data-act="x-mel">MEL items</button>'));
+    if (S.mel.length) C.push(card('mel', 'MEL items', S.mel.length + ' open', 'amb', S.mel.map(function (m) { var f = X.melFind ? X.melFind(m.no) : null, pr = f ? (f.v.map(function (v) { return v.pr; }).join(' ').match(/\((?:O|M-CD)\)/g) || []).filter(function (x, j, a) { return a.indexOf(x) === j; }) : []; return esc(m.no) + ' ' + esc(m.title) + (pr.length ? ' <b class="mvt">' + esc(pr.join(' / ')) + '</b>' : ''); }).join(' · '), '<button type="button" class="cbtn" data-act="x-mel">MEL items</button>'));
   }
 
   /* ---------- DIVERT: nearest airports, emergency, lost comms, interception */
@@ -166,20 +186,54 @@ window.FPTools = function (A) {
   function divAlerts() {
     return (D.crew_alert || []).filter(function (c) { return /DIVERSION/i.test(c.title); }).map(function (c) { return '<div class="banner"><b>' + esc(c.id) + ' ' + esc(c.title) + '</b><br>' + esc(c.x) + '</div>'; }).join('');
   }
-  function aptHtml(e) {
+  function aptHtml(e) {   // v2.0 (user 05 NOV 26): short rows; tap one -> what you need to fly there and land
     var rows = aptRows(e), h = here(e); if (!rows) return '<p class="note">Map data not available.</p>';
-    var s = '<p class="sub">' + srcLine(h, e) + '</p>' + divAlerts();
-    s += '<ol class="dvl">' + rows.map(function (r) {
-      var cls = r.ch.map(function (c) { return '<span class="tag dv-' + esc(c.cls) + '">' + esc(c.cls) + '</span>'; })[0] || '';
-      var wins = r.ch.map(function (c) { return hm(c.a) + '–' + hm(c.b) + (c.note ? ' ' + esc(c.note) : ''); }).join('; ');
-      return '<li class="dvr' + (r.ok ? '' : ' no') + (r.d <= 420 ? ' in1' : '') + '"><div class="dvh"><b class="dvi">' + esc(r.a.icao) + '</b>' + cls + (r.rw ? '<span class="dvw">RWY ' + esc(r.rw) + '</span>' : '') +
-        (r.win ? '<span class="tag k-fc">in 1-h window</span>' : '') + '<button type="button" data-act="x-map" data-icao="' + esc(r.a.icao) + '"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Map</button></div>' +
-        '<div class="dvn"><b>' + Math.round(r.d) + ' NM</b> · ' + d3s(r.trk) + '°T · <b>' + hm(Math.round(r.t2)) + '</b> at GS · ' + hm(Math.round(r.t1)) + ' at 420 kt (OM-C 1 h)</div>' +
-        '<div class="dvx">' + esc(r.a.lab) + (wins ? ' · 1-h windows ' + wins : '') + (r.a.wx ? ' · wx ' + esc(r.a.wx) : '') + '</div>' +
-        (r.wx && (r.wx.taf || r.wx.metar) ? '<details class="dvt"><summary>METAR / TAF (OFP)</summary><code>' + esc(r.wx.metar || '') + '</code><code>' + esc(r.wx.taf || '') + '</code></details>' : '') + '</li>';
-    }).join('') + '</ol><p class="note">Great-circle distance and true track from the position above. Time "at GS" uses the GPS ground speed or the planned GS of the current leg; "420 kt" is the OM-C one-hour distance (420 NM) as time. Class and 1-h windows: pack TEM chain. Check suitability, weather and the OFP / OM-C before deciding.</p>';
+    var DI = D.divinfo || {};
+    var s = '<p class="sub dvpos">' + srcLine(h, e) + '</p>' + divAlerts();
+    s += '<div class="dvl2">' + rows.map(function (r) {
+      var I = DI[r.a.icao] || {}, role = (r.a.lab.split(' - ')[1] || '').replace(/\|.*$/, '').trim(), nm = I.name || (r.wx && r.wx.name) || '';
+      var tag = r.ch.map(function (c) { return c.cls; })[0], wx = I.wx ? I.wx.sum : '';
+      var rw = (I.rwys || []).map(function (x) { return x[0]; }).join(' / ') || (r.rw ? 'RWY ' + r.rw : '');
+      var head = '<summary class="dvs"><b class="dvi">' + esc(r.a.icao) + '</b><span class="dvnm">' + esc(I.name || '') + (role ? ' <em>' + esc(role) + '</em>' : '') + '</span>' +
+        '<span class="dvd"><b>' + Math.round(r.d) + ' NM</b> ' + d3s(r.trk) + '°T · ' + hm(Math.round(r.t2)) + '</span>' +
+        '<span class="dvq">' + (tag ? '<i class="tag dv-' + esc(tag) + '">' + esc(tag) + '</i>' : '') + (rw ? '<i>' + esc(rw) + '</i>' : '') +
+        (wx ? '<i class="' + (/^watch/.test(wx) ? 'w' : 'g') + '">wx ' + esc(wx.replace(/^watch: /, '')) + '</i>' : '') +
+        ((I.fuel || []).length ? '<i class="f">OFP fuel</i>' : '') + (r.win ? '<i class="g">in 1-h window</i>' : '') + '</span></summary>';
+      return '<details class="dvc' + (r.ok ? '' : ' no') + '" data-icao="' + esc(r.a.icao) + '">' + head + divCard(r, I) + '</details>';
+    }).join('') + '</div><p class="note">Distance / true track / time from the position above (GPS ground speed or the planned GS). Tap an airport for runways, ILS, frequencies, weather, NOTAMs, a short AOI / CCI summary and OFP fuel. ' +
+      esc(D.divinfo_src || '') + '. Check suitability, weather and the OFP / OM-C before deciding.</p>';
     return s;
   }
+  function divCard(r, I) {
+    var row = function (k, v) { return v ? '<div class="dvk"><small>' + k + '</small><div>' + v + '</div></div>' : ''; };
+    var rw = (I.rwys || []).map(function (x) { return '<b>' + esc(x[0]) + '</b> LDA ' + x[1] + ' m'; }).join(' · ') + ((I.rwys || []).length ? ' · ' + I.rwys[0][2] + ' m wide' : '') + (I.elev != null ? ' · AD ELEV ' + I.elev + ' ft' : '');
+    var ils = (I.ils || []).map(function (x) { return esc(x[1]) + ' <b class="fq" data-fq="' + esc(x[0]) + '" data-lab="' + esc(r.a.icao + ' ' + x[1]) + '">' + esc(x[0]) + '</b>'; }).join(' · ');
+    var fq = (I.freqs || []).map(function (x) { return esc(x[0]) + ' <b class="fq" data-fq="' + esc(x[1]) + '" data-lab="' + esc(r.a.icao + ' ' + x[0]) + '">' + esc(x[1]) + '</b>'; }).join(' · ');
+    var wx = I.wx ? esc(I.wx.sum) + ((I.wx.metar || I.wx.taf) ? '<details class="cmx dvraw"><summary aria-label="METAR / TAF">' + EYE + '<span>METAR / TAF</span></summary><code>' + esc(I.wx.metar || '') + '</code><code>' + esc(I.wx.taf || '') + '</code></details>' : '') : '';
+    var ns = I.notams || [], nt = ns.slice(0, 3).map(function (n) { return '<li>' + esc(n.t) + ' <span class="ref">' + esc(n.id) + '</span></li>'; }).join('');
+    var nmore = ns.length > 3 ? '<details class="cmx"><summary>' + EYE + '<span>' + (ns.length - 3) + ' more NOTAMs</span></summary><ul>' + ns.slice(3).map(function (n) { return '<li>' + esc(n.x) + ' <span class="ref">' + esc(n.id) + '</span></li>'; }).join('') + '</ul></details>' : '';
+    var F2 = ((D.aptinfo || {})[r.a.icao] || {}).facts || {};
+    var cci = [I.cat ? 'Airport <b>CAT ' + esc(I.cat) + '</b>' : '', I.lvo ? esc(I.lvo) : '', I.park ? 'Parking: ' + esc(I.park) : '', I.gha ? 'Handling: ' + esc(I.gha) : '', I.brake ? 'Brake cooling: ' + esc(I.brake) : '',
+      F2.RFF ? 'RFF ' + esc(F2.RFF.replace(/\.$/, '')) : '', F2.Fuel ? 'Fuel ' + esc(F2.Fuel) : '', F2.Customs ? 'Customs ' + esc(F2.Customs) : ''].filter(Boolean).join(' · ');
+    var arr = (I.sum ? I.sum.map(function (x) { return '<li>' + esc(x[0]) + ' <span class="ref">' + esc(x[1]) + '</span></li>'; }) :
+      (I.arr || []).concat(I.add || []).map(function (x) { return '<li>' + esc(x) + '</li>'; })).join('');
+    var fuel = (I.fuel || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + (I.etops ? '<li>' + esc(I.etops) + '</li>' : '');
+    var any = rw || ils || fq || cci || arr || nt || fuel;
+    return '<div class="dvb">' + (any ? row('Runways', rw) + row('ILS', ils) + row('Frequencies', fq) + row('Weather (OFP)', wx || 'no METAR / TAF in the OFP') +
+      row('NOTAMs (OFP)', nt ? '<ul>' + nt + '</ul>' + nmore : 'none with runway / ILS / closure keywords') + row('AOI / CCI summary', (arr ? '<ul class="dvsum">' + arr + '</ul>' : '') + (cci ? '<div class="dvfx">' + cci + '</div>' : '')) + row('Fuel (OFP)', fuel ? '<ul>' + fuel + '</ul>' : '') :
+      '<p class="note">No Lido AOI / CCI for this airport in this pack' + (r.wx ? ' – OFP weather only.' : '.') + '</p>' + (r.wx && (r.wx.metar || r.wx.taf) ? '<code>' + esc(r.wx.metar || '') + '</code><code>' + esc(r.wx.taf || '') + '</code>' : '')) +
+      '<div class="dvbb"><button type="button" data-act="x-map" data-icao="' + esc(r.a.icao) + '"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Show on map</button>' +
+      '</div></div>';
+  }
+  var EYE = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  function aptFacts(icao) {   // Lido AOI 1-10 facts + the AOI pages (DocuNet capture)
+    var I = D.aptinfo && D.aptinfo[icao]; if (!I) return '';
+    var F2 = I.facts || {}, ks = [['RFF', 'RFF'], ['Fuel', 'Fuel'], ['ATS Hours', 'ATS'], ['Customs', 'Customs']];
+    var line = ks.filter(function (k) { return F2[k[0]]; }).map(function (k) { return '<span><b>' + k[1] + '</b> ' + esc(F2[k[0]].replace(/\.$/, '')) + '</span>'; }).join('');
+    return (line ? '<div class="dvf">' + line + '</div>' : '') + (F2['Runway Restrictions'] ? '<div class="dvx">RWY: ' + esc(F2['Runway Restrictions']) + '</div>' : '') +
+      '<details class="dvt"><summary>Lido AOI (' + I.pages.length + ' pages)</summary>' + I.pages.map(function (p) { return '<p class="rcfx"><b>' + esc(p[0]) + '</b>\n' + esc(p[1]) + '</p>'; }).join('') + '<p class="note">' + esc(I.src) + '</p></details>';
+  }
+  X.aptFacts = aptFacts;
   function fq(f, lab) { return '<button type="button" class="fqb fq" data-fq="' + esc(f) + '" data-lab="' + esc(lab || '') + '">' + esc(f) + '</button>'; }
   function emerHtml(e) {
     var f = curFir(Math.max(0, e)), c = f && D.comms_fir ? D.comms_fir[f.fir] : null, sat = (D.satcom || []).filter(function (x) { return f && x.fir === f.fir; });
@@ -191,6 +245,8 @@ window.FPTools = function (A) {
     if (ib) s += '<div class="banner">In the IFBP area: broadcast on 126.9 MHz (see IFBP on the map).</div>';
     var rn = (D.rnotams || []).filter(function (n) { return n.kind === 'conflict' && f && (n.fir === f.fir || new RegExp(f.name.replace(/[^A-Za-z]/g, '').toUpperCase() + ' FIR').test(n.x.replace(/[^A-Z ]/g, ''))); });
     if (rn.length) s += rn.map(function (n) { return '<div class="banner red"><b>' + esc(n.id) + '</b> ' + esc(n.x) + '</div>'; }).join('');
+    var fp = f && D.firproc ? D.firproc[f.fir] : null;
+    if (fp && (fp.cont || fp.cont2)) s += '<details class="nt"><summary><b>' + esc(f.fir) + ' contingency plan</b> <span class="tag">Lido CRAR</span><span class="ntx">what ATC and you do if ' + esc(f.name) + ' ATC services are disrupted (contingency routes, levels, frequencies)</span></summary><p>' + esc([fp.cont, fp.cont2].filter(Boolean).join('\n\n')) + '</p><p class="note">' + esc(D.firproc_src || '') + '</p></details>';
     var dp = D.events.filter(function (v) { return v.kind === 'dp'; });
     if (dp.length) s += '<h3 class="shh">Decompression point (OFP / pack)</h3><ul>' + dp.map(function (v) { return '<li>' + esc(v.text) + ' · EET ' + hm(v.eet_min) + ' (' + zt(v.eet_min) + ')</li>'; }).join('') + '</ul>';
     var esA = D.chain.filter(function (c) { return /escape/i.test(c.note) && e >= c.a && e <= c.b; });
@@ -242,7 +298,9 @@ window.FPTools = function (A) {
       '<li>Start descent at, or as close as possible to, the last acknowledged EAT – or, if none, the ETA from the current flight plan.</li>' +
       '<li>Fly the normal instrument approach for that navaid / fix and land, if possible, within <b>30 min</b> after the ETA or last acknowledged EAT, whichever is later.</li></ol>' +
       '<h3 class="shh">VMC</h3><p>Continue in VMC, land at the nearest suitable aerodrome and report the arrival to ATS by the quickest means.</p>' +
-      '<p class="note">FIR now: ' + (f ? esc(f.fir) + ' ' + esc(f.name) : '-') + '. FIR-specific radio-failure procedures are not in the pack captured for this flight – check Lido CRAR / RSI COM. Lido RSI 2.7.5.5 (60 min rule) applies only to the oceanic Pacific FIRs it lists.</p>';
+      (function () { var fp = f && D.firproc ? D.firproc[f.fir] : null;
+        if (fp && fp.rcf) return '<h3 class="shh">' + esc(f.fir) + ' ' + esc(f.name) + ' – radio-failure procedure <small>Lido CRAR – this applies in the FIR</small></h3><div class="banner">The State procedure below applies in this FIR; the ICAO text above is the general standard.</div><p class="rcfx">' + esc(fp.rcf) + '</p><p class="note">' + esc(D.firproc_src || '') + '</p>';
+        return '<p class="note">FIR now: ' + (f ? esc(f.fir) + ' ' + esc(f.name) : '-') + '. No separate radio-failure section was found in the Lido CRAR chapter of this FIR' + (D.firproc_src ? ' (' + esc(D.firproc_src) + ')' : '') + ' – the ICAO standard above applies. Lido RSI 2.7.5.5 (60 min rule) is only for the oceanic Pacific FIRs it lists.</p>'; })();
     if (rn.length) s += '<h3 class="shh">Radio-failure items in the OFP NOTAMs</h3>' + rn.map(function (n) { var i = n.x.search(/\bRCF\b|COMMUNICATION FAILURE|COM FAILURE|RADIO FAILURE/); return '<details class="nt"><summary><b>' + esc(n.icao) + '</b> ' + esc(n.id) + ' · ' + esc(n.cat) + '</summary><p>…' + esc(n.x.slice(Math.max(0, i - 80), i + 900)) + '…</p></details>'; }).join('');
     return s;
   }
@@ -270,7 +328,7 @@ window.FPTools = function (A) {
       (divTab === 'apt' ? aptHtml(e) : divTab === 'emer' ? emerHtml(e) : divTab === 'dev' ? devHtml(e) : divTab === 'rcf' ? rcfHtml(e) : icptHtml());
   }
   var divT = 0;
-  function openDivert(tab) { if (tab) divTab = tab; openSheet('divert', 'Divert · emergency', divHtml, { wide: true, tick: function () { if (Date.now() - divT > 30000 && divTab === 'apt') { divT = Date.now(); rerender(); } } }); divT = Date.now(); }
+  function openDivert(tab) { if (tab) divTab = tab; openSheet('divert', 'Diversion · emergency', divHtml, { wide: true, tick: function () { if (Date.now() - divT > 30000 && divTab === 'apt') { divT = Date.now(); rerender(); } } }); divT = Date.now(); }
   on('b-divert', 'click', function () { openDivert(); });
   X.openDivert = openDivert; X.aptRows = aptRows; X.curFir = curFir;
 
@@ -374,8 +432,8 @@ window.FPTools = function (A) {
 
   /* ---------- help tips per page */
   var HELP = {
-    _top: [['AIRBORNE NOW / T/O', 'Sets the take-off time; every time in the app counts from it (planned T/O until set).', '#airborne'], ['ELAPSED · ETA', 'Time since T/O and the planned landing time from the OFP trip time.', '.el'],
-      ['FUEL CHECK', 'Tap after each fuel check: 55-min countdown, amber at 5 min, red when due.', '#fc'], ['DIVERT', 'Nearest airports from your position, emergency card, lost comms, interception.', '#b-divert'],
+    _top: [['ELAPSED · ETA', 'Time since T/O and the planned landing time (UTC and local) from the OFP trip time. Tap ELAPSED to go to DASH, where the take-off time is entered once.', '.el'],
+      ['Timer chips', 'Running timers (fuel check, crew check, weather update ...) with their countdown; amber near the end, red when due. Tap = Timers (start / done / stop).', '#tmx'],
       ['NOW', 'The overview page: next action, status strip, Up next, cards.', '#nowbtn'], ['Search · Timers · Split · Help', 'Search the whole pack, your own timers, NOW + map side by side (landscape), this help.', '.tools'],
       ['Settings', 'Text size, theme (auto / dark / night / light), dimmer, screen on, sound, swipe, auto-tick by GPS, self-test.', '#set-btn']],
     now: [['Next action', 'The next thing due, with its countdown. Calls, fuel check and IFBP broadcast have a Done button.', '#nextaction'], ['Status strip', 'Phase and level, FIR, comms (tap for the big frequency board), CPDLC, SLOP, IFBP, GPS cross-check, day/night.', '#nowstrip'],
@@ -439,6 +497,12 @@ window.FPTools = function (A) {
     P.atick = !P.atick; A.savePrefs(); applyNav();
     if (P.atick) { var g = G(); if (g) g.gps(true); A.toast(navigator.geolocation ? 'Auto-tick on: waypoints tick themselves 1 NM after you pass them (GPS, within 30 NM of the route). Undo is always offered.' : 'Auto-tick on, but this device has no location service.'); }
   });
+  /* design option (v1.4 choice): cockpit (default) | glass | avionics | paper */
+  var SKINS = { avionics: 'Avionics', cockpit: 'Cockpit', glass: 'Glass', paper: 'Briefing' };
+  function applySkin() { var k = SKINS[P.skin] ? P.skin : 'avionics'; /* Avionics = default style (user 05 NOV 26) */ if (k === 'cockpit') document.documentElement.removeAttribute('data-skin'); else document.documentElement.setAttribute('data-skin', k); var b = $('skin-b'); if (b) b.textContent = 'Style: ' + SKINS[k]; }
+  var sgD = document.querySelector('#settings .sg:nth-child(2)'); if (sgD) sgD.insertAdjacentHTML('beforeend', '<button type="button" id="skin-b"></button>');
+  on('skin-b', 'click', function () { var ks = Object.keys(SKINS), i = ks.indexOf(SKINS[P.skin] ? P.skin : 'avionics'); P.skin = ks[(i + 1) % ks.length]; A.savePrefs(); applySkin(); A.applyTheme(); });
+  applySkin();
   applyDim(); applyNav(); applyHl();
 
   /* ---------- tools menu (weather, NOTAMs, calculators, references) lives in fp_tools2.js */
@@ -458,20 +522,34 @@ window.FPTools = function (A) {
     }
     else if (a === 'x-tm5') { var t = tById(b.dataset.id); if (t) { t.end += 300000; A.save(); A.tick(true); rerender(); } }
     else if (a === 'x-tmdel') { var id = b.dataset.id, prev = JSON.stringify(S.timers); S.timers = S.timers.filter(function (x) { return x.id !== id; }); A.save(); A.tick(true); rerender(); A.toast('Timer stopped.', function () { S.timers = JSON.parse(prev); A.save(); A.tick(true); }); }
+    else if (a === 'x-aoi') { var ic = b.dataset.icao; openSheet('aoi', ic + ' – Lido AOI / CCI', function () { return aptFacts(ic); }, { wide: true }); }
+    else if (a === 'x-div') openDivert('apt');
+    else if (a === 'x-fcstop') { A.fcStop(); rerender(); }
     else if (a === 'x-dtab') { divTab = b.dataset.t; if (sheet && sheet.kind === 'divert') rerender(); else openDivert(divTab); }
     else if (a === 'x-map') { var icao = b.dataset.icao; closeSheet(); if (A.cur() !== 'cockpit' && A.cur() !== 'route-map') location.hash = 'route-map'; setTimeout(function () { var g = G(); if (g) g.focusApt(icao); }, 250); }
     else if (a === 'x-sgo') searchGo(+b.dataset.i);
     else if (a === 'x-show') showSel(b.dataset.sel);
     else if (a === 'x-unpin') { var k = +b.dataset.i, pp = S.pins[k]; S.pins.splice(k, 1); A.save(); A.tick(true); A.toast('Unpinned.', function () { S.pins.splice(k, 0, pp); A.save(); A.tick(true); }); }
+    else if (a === 'x-ret') { if (window.FPOpenFlight && window.FPReturn) window.FPOpenFlight(window.FPReturn.id); }
     else if (a === 'x-pgo') { var q = S.pins[+b.dataset.i]; if (q) goBlock(q.v, q.i); }
     else if (T2 && T2.act) T2.act(b, ev);
   }
 
   /* ---------- per second / per page */
+  /* flight progress line (header bottom edge) + phase chip */
+  var PG = $('prog');
+  if (PG) { D.firs.forEach(function (f) { if (f.eet_min > 0 && f.eet_min < T) PG.insertAdjacentHTML('beforeend', '<b style="left:' + (f.eet_min / T * 100).toFixed(2) + '%"></b>'); });
+    if (EI) PG.insertAdjacentHTML('beforeend', '<b class="et" style="left:' + (EI.entry.eet_min / T * 100).toFixed(2) + '%;width:' + ((EI.exit.eet_min - EI.entry.eet_min) / T * 100).toFixed(2) + '%"></b>'); }
+  var TOC = LV.length ? LV[0].eet_min : 20;
+  function phase(e) { var td = tod(); if (e < 0) return ['gnd', 'PRE-FLIGHT']; if (e < TOC) return ['climb', 'CLIMB']; if (td > 0 && e >= td && e < T) return ['desc', 'DESCENT']; if (e >= T) return ['land', 'LANDED']; var f = flAt(e); return ['cruise', 'CRUISE' + (f ? ' FL' + f : '')]; }
   function tick(e) {
+    var pr = Math.max(0, Math.min(1, e / T)); document.documentElement.style.setProperty('--prog', pr.toFixed(4));
+    var pt = $('prog-t'); if (pt) pt.textContent = e < 0 ? '' : (e >= T ? 'LANDED' : Math.round(pr * 100) + ' % · ' + hm(T - e) + ' TO GO');
+    var ph = $('phase'); if (ph) { var q = phase(e); ph.hidden = false; ph.className = 'phase ph-' + q[0]; ph.textContent = q[1] + (A.isPlan() ? ' · PLAN' : ''); }
     var s = $('tm-soon');
     if (s) { var ts = S.timers.slice().sort(function (a, b) { return a.end - b.end; })[0], l = ts ? tLeft(ts) : null; s.textContent = ts ? (l > 0 ? A.mmss(l) : 'DUE') : ''; s.parentNode.classList.toggle('due', !!ts && l <= 120); }
     if (sheet && sheet.tick) sheet.tick(e);
+    paintTmx();
     if (T2 && T2.tick) T2.tick(e);
   }
   function shown(h) { if (MENU) MENU.hidden = true; if (T2 && T2.shown) T2.shown(h); }

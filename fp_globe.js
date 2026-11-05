@@ -123,7 +123,7 @@ window.FPGlobe = function (host, D, L) {
       apt: v('--map-apt', '#8c96a3'), red: v('--red', '#e5534b'), cyan: v('--cyan', '#6cc6e6'), font: v('--body', 'system-ui, sans-serif') };
     Ct = Date.now(); return C;
   }
-  function visible() { return !!(host.offsetParent || host.classList.contains('gfull')); }
+  function visible() { return !!(host.offsetParent || host.classList.contains('gfull') || host.getClientRects().length); }   // v2.0: fixed (MAP full screen) has no offsetParent
   function req() { if (!raf) raf = requestAnimationFrame(draw); }
   function center() { return [-rot[0], -rot[1]]; }
   function clampK(x) { return Math.max(0.75, Math.min(48, x)); }
@@ -179,7 +179,12 @@ window.FPGlobe = function (host, D, L) {
     badge.textContent = GPS.on ? '✈ magenta = elapsed-time position · cyan = iPad GPS (cross-check)' : '✈ = elapsed-time position (OFP EET + your T/O) · not GPS';
     updProfile();
   }
-  sl.addEventListener('input', function () { stopPlay(); pv = +sl.value; setMode('preview'); if (follow) centerPlane(false); });
+  var slRaf = 0;
+  sl.addEventListener('input', function () {   // smooth scrubbing: coalesce to one update per frame, never fight a running fly animation
+    stopPlay(); cancelAnimationFrame(anim); pv = +sl.value;
+    if (slRaf) return;
+    slRaf = requestAnimationFrame(function () { slRaf = 0; if (mode !== 'preview') setMode('preview'); else updBar(); if (follow) centerPlane(false); else req(); });
+  });
   function centerPlane(animate) { var gf = mode === 'live' ? gpsFix() : null, p = gf ? [gf.lon, gf.lat] : posAt(Math.max(0, Math.min(T, curE()))); if (animate) fly(p, Math.max(k, 3), 500); else { rot = [-p[0], clampLat(-p[1]), 0]; req(); } }
   function setFollow(f) { follow = f; host.querySelector('[data-g="follow"]').classList.toggle('on', f); if (f) centerPlane(true); }
 
@@ -456,28 +461,46 @@ window.FPGlobe = function (host, D, L) {
   function onScreen(p) { return p && p[0] > -40 && p[0] < W + 40 && p[1] > -40 && p[1] < H + 40; }
   var LBL = [], RES = [];
   function label(t, p, o) { LBL.push({ t: t, x: p[0], y: p[1], o: o || {} }); }
-  function placeLabels(c) {
-    var ctx = gx, boxes = RES.slice(), wr = wrap.getBoundingClientRect();
+  var SBOX = [];
+  function routeBoxes() {   // keep words off the route line: small boxes every ~9 px along the projected route
+    var out = [];
+    for (var i = 0; i < RC.length - 1; i++) {
+      var A2 = RC[i], B2 = RC[i + 1], pa = vis(A2) ? proj(A2) : null, pb = vis(B2) ? proj(B2) : null;
+      var n = pa && pb ? Math.max(1, Math.ceil(Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) / 9)) : 24, ip = d3.geoInterpolate(A2, B2);
+      for (var j = 0; j <= n; j++) { var q = ip(j / n); if (!vis(q)) continue; var pp = proj(q); if (pp[0] < -10 || pp[0] > W + 10 || pp[1] < -10 || pp[1] > H + 10) continue; out.push({ x: pp[0] - 4, y: pp[1] - 4, w: 8, h: 8 }); }
+    }
+    return out;
+  }
+  var LPOS = {};   // last candidate used per label - tried first next frame
+  function placeLabels(c, stat) {
+    var ctx = gx, nR = 0, boxes = stat ? RES.concat(routeBoxes()) : SBOX.concat(RES), wr = wrap.getBoundingClientRect();
+    if (stat) nR = boxes.length;
     host.querySelectorAll('.gctl, .gbadge, .gpop:not([hidden])').forEach(function (el) { var r = el.getBoundingClientRect(); if (r.width) boxes.push({ x: r.left - wr.left - 4, y: r.top - wr.top - 4, w: r.width + 8, h: r.height + 8 }); });
     LBL.sort(function (a, b) { return (b.o.pri || 0) - (a.o.pri || 0); });
     LBL.forEach(function (l) {
       var f = l.o.font || ('600 12px ' + c.font); ctx.font = f;
       var w = ctx.measureText(l.t).width, h = l.o.size || 13, off = l.o.off || 8;
-      var cand = l.o.center ? [[-w / 2, -h / 2]] : [[off, -h - 2], [off, 3], [-w - off, -h - 2], [-w - off, 3], [-w / 2, -h - off - 2], [-w / 2, off]];
-      for (var q = 0; q < cand.length; q++) {
+      var cand = [];
+      if (l.o.center) cand = [[-w / 2, -h / 2], [-w / 2, -h - 10], [-w / 2, 10], [-w - 8, -h / 2], [8, -h / 2]];
+      else [off, off + 9, off + 20].forEach(function (o2) { cand.push([o2, -h - 2], [o2, 3], [-w - o2, -h - 2], [-w - o2, 3], [-w / 2, -h - o2 - 2], [-w / 2, o2]); });
+      var force = (l.o.pri || 0) >= 99, lk = force ? 'p' + l.o.pri : l.t, pq = LPOS[lk];
+      if (pq != null && pq < cand.length) { var pc = cand[pq]; cand.splice(pq, 1); cand.unshift(pc); cand.orig = pq; }
+      for (var q = 0; q <= cand.length; q++) {
+        if (q === cand.length) { if (force !== true) break; q = 0; force = 'now'; }
         var bx = { x: l.x + cand[q][0], y: l.y + cand[q][1], w: w, h: h };
-        if (bx.x < 2 || bx.y < 2 || bx.x + w > W - 2 || bx.y + h > H - 2) continue;
+        if (bx.x < 2 || bx.y < 2 || bx.x + w > W - 2 || bx.y + h > H - 2) { if (force === 'now') { bx.x = Math.max(2, Math.min(W - w - 2, bx.x)); bx.y = Math.max(2, Math.min(H - h - 2, bx.y)); } else continue; }
         var hitb = false;
         for (var j = 0; j < boxes.length; j++) { var b = boxes[j]; if (bx.x < b.x + b.w + 3 && bx.x + bx.w + 3 > b.x && bx.y < b.y + b.h + 2 && bx.y + bx.h + 2 > b.y) { hitb = true; break; } }
-        if (hitb) continue;
-        boxes.push(bx);
+        if (hitb && force !== 'now') continue;
+        boxes.push(bx); LPOS[lk] = cand.orig != null ? (q === 0 ? cand.orig : (q <= cand.orig ? q - 1 : q)) : q;
         ctx.textBaseline = 'top'; ctx.textAlign = 'left';
         if (l.o.box) { ctx.fillStyle = l.o.box; rr(bx.x - 4, bx.y - 3, w + 8, h + 5, 4); ctx.fill(); }
-        else { ctx.lineWidth = 3.2; ctx.strokeStyle = c.halo; ctx.lineJoin = 'round'; ctx.strokeText(l.t, bx.x, bx.y); }
+        else { ctx.lineWidth = 4; ctx.strokeStyle = c.halo; ctx.lineJoin = 'round'; ctx.strokeText(l.t, bx.x, bx.y); }
         ctx.fillStyle = l.o.col || c.text; ctx.fillText(l.t, bx.x, bx.y);
         return;
       }
     });
+    if (stat) SBOX = boxes.slice(0, RES.length).concat(boxes.slice(nR));   // the moving labels (aircraft, GPS) avoid the placed words; they have their own box, so they may cross the line
   }
   function rr(x, y, w, h, r) { gx.beginPath(); gx.moveTo(x + r, y); gx.arcTo(x + w, y, x + w, y + h, r); gx.arcTo(x + w, y + h, x, y + h, r); gx.arcTo(x, y + h, x, y, r); gx.arcTo(x, y, x + w, y, r); gx.closePath(); }
   function tri(p, s) { gx.beginPath(); gx.moveTo(p[0], p[1] - s); gx.lineTo(p[0] + s * 0.9, p[1] + s * 0.6); gx.lineTo(p[0] - s * 0.9, p[1] + s * 0.6); gx.closePath(); }
@@ -489,19 +512,28 @@ window.FPGlobe = function (host, D, L) {
     lon = ((lon + 540) % 360) - 180; return [((lon + 360) % 360) - 180, -dec];
   }
   var tLast = 0, tTimer = null, TC = null;
-  function terrain(x, c, LAND) {   // grey shaded relief over land, slightly darkened / lightened - skipped while the globe is moving
-    var q0 = Math.max(0.04, 0.6 / k), tk = [W, H, Math.round(rot[0] / q0), Math.round(rot[1] / q0), k.toFixed(3), c.land].join('|');
-    if (TC && TC.key === tk) { x.save(); x.beginPath(); path(LAND); x.clip(); x.drawImage(TC.cv, 0, 0, W, H); x.restore(); return; }
-    var now = Date.now(); if (now - tLast < 250) { tLast = now; clearTimeout(tTimer); tTimer = setTimeout(function () { SKEY = ''; tLast = 0; req(); }, 300); return; } tLast = now;
-    var sc = 3, w = Math.ceil(W / sc), h = Math.ceil(H / sc), im = x.createImageData(w, h), o = im.data, inv = proj.invert, dk = /^#?[0-3]/.test(c.land.replace('#', '')) || c.land.indexOf('rgb') < 0 && parseInt(c.land.slice(1, 3), 16) < 128;
-    for (var j = 0; j < h; j++) for (var i = 0; i < w; i++) {
-      var p = inv([i * sc + sc / 2, j * sc + sc / 2]); if (!p || isNaN(p[0])) continue; if (d3.geoDistance(p, center()) > PI / 2 - 0.01) continue;
-      var u = Math.floor((p[0] + 180) / 360 * TERR.w) % TERR.w, v = Math.min(TERR.h - 1, Math.max(0, Math.floor((90 - p[1]) / 180 * TERR.h))), s0 = TERR.d[v * TERR.w + u];
-      var dv = (s0 - 128) / 100, k2 = (j * w + i) * 4; if (dv > -0.03 && dv < 0.03) continue;   // flat ground: land colour unchanged
-      if (dv < 0) { o[k2] = o[k2 + 1] = o[k2 + 2] = 0; o[k2 + 3] = Math.min(dk ? 80 : 66, -dv * (dk ? 95 : 72)); } else { o[k2] = o[k2 + 1] = o[k2 + 2] = 255; o[k2 + 3] = Math.min(dk ? 34 : 48, dv * (dk ? 48 : 66)); }
+  function terrain(x, c, LAND) {   // grey shaded relief over land - coarse while the globe moves, sharp when it stops
+    var now = Date.now(), moving = now - tLast < 220; tLast = now;
+    var sc = moving ? 5 : 2, q0 = Math.max(0.03, 0.5 / k), tk = [W, H, sc, Math.round(rot[0] / q0), Math.round(rot[1] / q0), k.toFixed(3), c.land].join('|');
+    clearTimeout(tTimer); if (moving) tTimer = setTimeout(function () { tLast = 0; SKEY = ''; req(); }, 260);
+    if (!(TC && TC.key === tk)) {
+      var w = Math.ceil(W / sc), h = Math.ceil(H / sc), im = x.createImageData(w, h), o = im.data, S2 = r0 * k, cx = W / 2, cy = H / 2;
+      var l0 = -rot[0] * PI / 180, f0 = -rot[1] * PI / 180, sf = Math.sin(f0), cf = Math.cos(f0), TW = TERR.w, TH = TERR.h, TD = TERR.d;
+      var dk = c.land.charAt(0) === '#' && parseInt(c.land.slice(1, 3), 16) < 128, aS = dk ? 190 : 150, mS = dk ? 165 : 120, aH = dk ? 125 : 105, mH = dk ? 100 : 90;
+      for (var j = 0; j < h; j++) {
+        var yy = -((j + 0.5) * sc - cy) / S2;
+        for (var i = 0; i < w; i++) {
+          var xx = ((i + 0.5) * sc - cx) / S2, rho = Math.sqrt(xx * xx + yy * yy); if (rho >= 0.999) continue;
+          var cc = Math.asin(rho), sc2 = Math.sin(cc), cc2 = Math.cos(cc);
+          var lat = rho ? Math.asin(cc2 * sf + yy * sc2 * cf / rho) : f0, lon = l0 + (rho ? Math.atan2(xx * sc2, rho * cc2 * cf - yy * sc2 * sf) : 0);
+          var u = Math.floor(((lon * 180 / PI + 540) % 360) / 360 * TW), v = Math.floor((90 - lat * 180 / PI) / 180 * TH); if (v < 0) v = 0; if (v >= TH) v = TH - 1; if (u >= TW) u -= TW;
+          var dv = (TD[v * TW + u] - 128) / 100; if (dv > -0.02 && dv < 0.02) continue; var k2 = (j * w + i) * 4;
+          if (dv < 0) { o[k2] = o[k2 + 1] = o[k2 + 2] = dk ? 0 : 30; o[k2 + 3] = Math.min(aS, -dv * mS * 1.6); } else { o[k2] = o[k2 + 1] = o[k2 + 2] = 255; o[k2 + 3] = Math.min(aH, dv * mH * 1.8); }
+        }
+      }
+      var tc = (TC && TC.cv && TC.cv.width === w && TC.cv.height === h) ? TC.cv : document.createElement('canvas'); tc.width = w; tc.height = h; tc.getContext('2d').putImageData(im, 0, 0); TC = { key: tk, cv: tc };
     }
-    var tc = document.createElement('canvas'); tc.width = w; tc.height = h; tc.getContext('2d').putImageData(im, 0, 0); TC = { key: tk, cv: tc };
-    x.save(); x.beginPath(); path(LAND); x.clip(); x.imageSmoothingEnabled = true; x.drawImage(tc, 0, 0, W, H); x.restore();
+    x.save(); x.beginPath(); path(LAND); x.clip(); x.imageSmoothingEnabled = true; x.drawImage(TC.cv, 0, 0, W, H); x.restore();
   }
   function skey() { return [W, H, DPR, rot[0].toFixed(3), rot[1].toFixed(3), k.toFixed(4), themeVer, JSON.stringify(lay), pop.hidden ? '' : pop.offsetWidth + 'x' + pop.offsetHeight].join('|'); }
   function renderStatic(c) {
@@ -640,9 +672,9 @@ window.FPGlobe = function (host, D, L) {
       x.beginPath(); x.arc(b[0], b[1], 10.5, 0, 2 * PI); x.fillStyle = c.text; x.fill(); x.strokeStyle = c.halo; x.lineWidth = 1.5; x.stroke();
       x.fillStyle = c.bg; x.font = '800 12px ' + c.font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(String(a.n), b[0], b[1] + 0.5);
       RES.push({ x: b[0] - 11, y: b[1] - 11, w: 22, h: 22 });
-      HITS.push({ x: b[0], y: b[1], r: 10, html: function () { return '<b class="gph">' + a.n + ' · ' + esc(a.t) + ' – ' + hm(a.e) + '</b><div>' + esc(a.x) + '</div>'; } });
+      HITS.push({ x: b[0], y: b[1], r: 16, html: function () { return '<b class="gph">' + a.n + ' · ' + esc(a.t) + ' – ' + hm(a.e) + '</b><div>' + esc(a.x) + '</div>'; } });
     });
-    placeLabels(c);
+    placeLabels(c, true);
     SHITS = HITS; path = pathD; gx = ctx;
   }
   function draw() {
@@ -681,7 +713,7 @@ window.FPGlobe = function (host, D, L) {
       HITS.push({ x: gp[0], y: gp[1], r: 14, html: gpsHtml });
       label('◎ GPS ' + hh(mod(gf.t)) + 'Z', gp, { pri: 99, box: cyc, col: '#06222c', font: '800 12px ' + c.font, size: 13, off: 20 });
     }
-    placeLabels(c);
+    placeLabels(c, false);
   }
 
   /* ---------- side view: MORA along the route, planned levels, aircraft; return / ahead airports either side */

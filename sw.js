@@ -1,7 +1,7 @@
 /* Flight Prep service worker: keeps the app shell on the device so it opens with no internet.
    Bump VERSION when any app file changes - the app then shows "A new version is ready". Flight files are in IndexedDB, not here. */
-var VERSION = 'fpapp-1.3.0';
-var ASSETS = ['./', 'index.html', 'app.css', 'd3geo.js', 'fp_terrain.js', 'fp_globe.js', 'fp_live.js', 'fp_tools.js', 'fp_tools2.js', 'fp_mount.js', 'inter-Regular.woff', 'inter-SemiBold.woff', 'inter-Bold.woff', 'inter-ExtraBold.woff', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+var VERSION = 'fpapp-2.0.0';
+var ASSETS = ['./', 'index.html', 'app.css', 'd3geo.js', 'fp_terrain.js', 'fp_globe.js', 'fp_live.js', 'fp_tools.js', 'fp_tools2.js', 'fp_agc.js', 'fp_amap.js', 'fp_mount.js', 'inter-Regular.woff', 'inter-SemiBold.woff', 'inter-Bold.woff', 'inter-ExtraBold.woff', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(ASSETS); })); });
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== VERSION; }).map(function (k) { return caches.delete(k); })); })

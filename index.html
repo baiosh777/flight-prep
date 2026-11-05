@@ -37,6 +37,7 @@
  <div class="row1">
   <span class="cs" id="cs" title="ATC call sign">FLIGHT PREP</span>
   <span class="fl"><b id="fl-b">No flight loaded</b><small id="fl-small">Load a flight file in FLIGHTS</small></span>
+  <span id="phase" class="phase" hidden></span>
   <a href="#now" id="nowbtn" class="nowbtn" data-v="now"><svg class="ic" aria-hidden="true"><use href="#i-now"/></svg>NOW</a>
   <span class="utc ins"><small>UTC</small><b id="utc">--:--:--</b></span>
   <button type="button" id="set-btn" class="setbtn icb" aria-label="Settings" aria-expanded="false" aria-controls="settings"><svg class="ic" aria-hidden="true"><use href="#i-set"/></svg></button>
@@ -45,7 +46,8 @@
   <button type="button" id="airborne" class="air"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>AIRBORNE NOW</button>
   <label class="to ins"><small>T/O</small><span><input id="to-input" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="HHMM" aria-label="Take-off time UTC, HHMM"><i>Z</i></span></label>
   <span class="el ins"><small id="el-lab">ELAPSED</small><b id="elapsed">-:--</b></span>
-  <span class="eta ins"><small>ETA</small><b id="eta">----Z</b></span>
+  <span class="eta ins"><small>ETA</small><b id="eta">----Z</b><small class="lt" id="eta-lt"></small></span>
+  <span class="tmx" id="tmx" aria-live="polite"></span>
   <button type="button" id="fc" class="fc idle"><small id="fc-l">FUEL CHECK</small><b id="fc-t">START</b></button>
   <button type="button" id="b-divert" class="divbtn" aria-label="Diversion helper: nearest airports"><svg class="ic" aria-hidden="true"><use href="#i-divert"/></svg>DIVERT</button>
  </div>
@@ -67,6 +69,7 @@
    <button type="button" id="b-help" class="icb" aria-label="Help for this page"><svg class="ic" aria-hidden="true"><use href="#i-help"/></svg></button>
   </div>
  </div>
+ <div class="prog" id="prog" aria-hidden="true"><i></i><span id="prog-t"></span></div>
 </header>
 <main id="main">
 <section id="v-now" class="view" data-view="now" hidden>
@@ -86,19 +89,24 @@
  <div class="wptbar"><span><b>Tap a row when you pass it.</b> The next one is framed in magenta; tap a ticked row to step back to it.</span>
   <button type="button" id="wpt-next">Go to next</button><button type="button" id="undo">Undo last</button><button type="button" id="reset">Reset</button></div>
  <table class="wpt" id="wpt"><thead><tr><th>EET</th><th>Waypoint</th><th>FIR</th><th>Comms – VHF in order · HF · CPDLC · calls</th><th>Special requirements</th><th>Threat</th><th>MORA</th><th>Fuel t<br>min / plan</th></tr></thead><tbody></tbody></table>
- <p class="note">Comms: VHF numbered in the order you will use them; HF with the day (HJ) or night (HN) set that applies at the planned time first (highlighted); CPDLC logon address and time; call / log-on deadlines with Done. SELCAL check: not mandatory in these FIRs (Lido RSI / CRAR) – where it is mandatory the row says so. MORA: amber above 5000 ft, red above 10000 ft. Fuel plan = OFP minimum remaining + EXTRA + CONT. ▶ = FIR boundary (FPL EET). DUE = the planned time has passed but the row is not ticked. Diversion airports: MAP (return / ahead).</p>
+ <p class="note">Comms: VHF numbered in the order you will use them; split frequencies by sector (North / South …) with the expected one first (highlighted); HF with the day (HJ) or night (HN) set that applies at the planned time first (highlighted); CPDLC <b>LOGON … by …</b> highlighted in the first row of the FIR; call / log-on deadlines with Done; the eye (more) opens SATCOM numbers, references and sources. SELCAL check: not mandatory in these FIRs (Lido RSI / CRAR) – where it is mandatory the row says so. MORA: amber above 5000 ft, red above 10000 ft. Fuel plan = OFP minimum remaining + EXTRA + CONT. ▶ = FIR boundary (FPL EET). DUE = the planned time has passed but the row is not ticked. Diversion airports: MAP (return / ahead).</p>
 </section>
 <div id="static-views"></div>
 <!--APP-ONLY-START-->
 <section id="v-flights" class="view" data-view="flights" hidden>
  <h1 class="pt">Flights</h1>
  <p class="sub">Flights are stored on this iPad only. Everything works without internet once a flight is loaded.</p>
- <div><label class="load">Load flight file<input type="file" id="load-file" accept=".json,application/json"></label></div>
+ <div class="ldbox">
+  <label class="load"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>Load flight file<input type="file" id="load-file" accept=".json,application/json"></label>
+  <button type="button" id="paste-btn" class="pastebtn">Paste flight</button>
+  <label class="ckl retck" id="asret-l" hidden><input type="checkbox" id="asret"> <span>Save as the <b>return flight</b> of <b id="asret-n"></b> (turnaround)</span></label>
+ </div>
+ <textarea id="paste-zone" class="pzone" rows="2" placeholder="Or long-press here → Paste a copied flight file (or its text) – or drop the file here."></textarea>
  <div id="load-msg" class="msg" hidden></div>
  <div id="flist" class="flights"></div>
  <div class="bar"><span>How to use</span><small>offline</small></div>
  <ol class="steps">
-  <li>Claude sends a flight file for every flight (for example <b>EK794_NBJ-DXB_flight.json</b>). Save it to the Files app.</li>
+  <li>Claude sends a flight file for every flight (for example <b>EK794_NBJ-DXB_flight.json</b>). Save it to the Files app – or copy it and use <b>Paste flight</b>.</li><li>Turnaround: load or paste the return flight with <b>Save as the return flight</b> ticked. It is kept next to the outbound flight and offered on NOW before landing.</li>
   <li>Tap <b>Load flight file</b> and pick it. The app opens the flight on the NOW screen.</li>
   <li>At take-off tap <b>AIRBORNE NOW</b> (or type the time). Tap waypoint rows as you pass them; tap <b>Done</b> on calls; tap <b>FUEL CHECK</b> after each fuel check.</li>
   <li>Your take-off time, ticks and timers stay on this iPad, per flight. Flights older than 5 days are removed automatically.</li>
@@ -120,6 +128,8 @@
 <script src="fp_live.js"></script>
 <script src="fp_tools.js"></script>
 <script src="fp_tools2.js"></script>
+<script src="fp_agc.js"></script>
+<script src="fp_amap.js"></script>
 <script src="fp_mount.js"></script>
 <script src="app.js"></script>
 </body>

@@ -101,6 +101,9 @@ window.FPLive = function (D) {
     toast('Fuel check at ' + isoZ(S.fc) + ' – timer restarted, 55:00.', function () { S.fc = prev; S.fcLog = prevLog; save(); paintFC(); tick(true); });
   }
   on('fc', 'click', fcReset);
+  function fcStop() { var prev = S.fc; S.fc = null; save(); paintFC(); tick(true); toast('Fuel check timer stopped.', function () { S.fc = prev; save(); paintFC(); tick(true); }); }
+  var elx = document.querySelector('.top .el');   // v2.0: tap the elapsed time -> DASH to set the T/O time
+  if (elx) { elx.setAttribute('role', 'button'); elx.tabIndex = 0; elx.addEventListener('click', function () { if (location.hash !== '#dash') location.hash = 'dash'; setTimeout(function () { var i = $('to-input'); if (i && isPlan()) i.focus(); }, 120); }); }
   function paintFC() {
     var b = $('fc'), left = fcLeft(), t = $('fc-t'), lab = $('fc-l'), st = left === null ? 'idle' : (left <= 0 ? 'red' : (left <= 300 ? 'amb' : ''));
     if (b) {
@@ -123,8 +126,8 @@ window.FPLive = function (D) {
       '<td class="cmt">' + r.call + '</td><td>' + r.special + '</td><td>' + r.threat + '</td>' +
       '<td class="mora ' + mc + '">' + (r.mora == null ? '-' : r.mora) + '</td>' +
       '<td class="fu">' + (r.fmin == null ? '-' : r.fmin.toFixed(1) + '<br><b>' + r.fplan.toFixed(1) + '</b>') + '</td>';
-    tr.addEventListener('click', function (ev) { if (ev.target.closest('a, button')) return; tap(r.i); });
-    tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r.i); } });
+    tr.addEventListener('click', function (ev) { if (ev.target.closest('a, button, details, summary')) return; tap(r.i); });   // v2.0: the eye ("more") only opens the info
+    tr.addEventListener('keydown', function (e) { if (e.target.closest && e.target.closest('details, summary, button, a')) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r.i); } });
     tb.appendChild(tr); trs.push(tr);
   });
   nowRow = document.createElement('tr'); nowRow.className = 'nowline'; nowRow.innerHTML = '<td colspan="8"><div></div></td>';
@@ -343,8 +346,11 @@ window.FPLive = function (D) {
     var se = sunAt(e), night = se != null ? se < -0.833 : null;
     var cm = cf && D.comms_fir ? D.comms_fir[cf.fir] : null;
     if (cm && e <= T) {
-      var hf = cm.hf || {}, set = hf.any || (night === false ? hf.day : hf.night) || hf.day || hf.night;
-      h += chip('COMMS', esc(cm.vhf) + (set ? ' · HF ' + (hf.any ? '' : (night === false ? 'day ' : 'night ')) + esc(set.join(' / ')) : '') + (cm.sel ? ' <small>SELCAL avail.</small>' : ''), 'com', true);
+      var hf = cm.hf || {}, ord = night === false ? ['day', 'night'] : ['night', 'day'], hfl = [];   // v2.0: one frequency per line; HF of the time of day first
+      if (hf.any) hfl.push('HF ' + esc(hf.any.join(' / ')));
+      else ord.forEach(function (k, i) { if (hf[k]) hfl.push((i ? '<small>' : '') + 'HF ' + (k === 'night' ? 'night / evening ' : 'day / morning ') + esc(hf[k].join(' / ')) + (i ? '</small>' : '')); });
+      var vhs = esc(cm.vhf).replace(/(\d{3}\.\d{1,3}\s*(?:N|S|E|W|NE|NW|SE|SW|East|West|North|South)?)\s+\/\s+(?=\d{3}\.\d)/g, '$1<br>');
+      h += chip('COMMS', vhs + (hfl.length ? '<br>' + hfl.join('<br>') : '') + (cm.sel ? ' <small>SELCAL avail.</small>' : ''), 'com', true);
     }
     var cp = cf && D.geo && D.geo.cpdlc ? segOf(D.geo.cpdlc.segs, cf.fir) : null;
     if (cp && e <= T) h += chip('CPDLC', cp.addr ? esc(cp.addr) + (cp.st === 'trial' ? ' <small>trial</small>' : '') : 'none', cp.addr ? 'vio' : 'mut', true);
@@ -438,6 +444,7 @@ window.FPLive = function (D) {
     $('el-lab').textContent = isPlan() ? 'PLAN (no T/O)' : (e < 0 ? 'TO T/O' : 'ELAPSED');
     elb.textContent = e > T + 240 ? 'CHECK T/O' : hm(e);
     $('eta').textContent = zt(toMin() + T);
+    var elt = $('eta-lt'); if (elt) { var lt_ = ((toMin() + T + Math.round((F.arr_off || 0) * 60)) % 1440 + 1440) % 1440; elt.textContent = pad(Math.floor(lt_ / 60)) + pad(lt_ % 60) + ' LT'; }
     if (TL) { var x = X(e), nl = $('tl-now'); if (nl) { nl.setAttribute('x1', x); nl.setAttribute('x2', x); nl.style.display = (e >= 0 && e <= T) ? '' : 'none'; } }
     var cn = $('chain-now');
     if (cn) { var vb = cn.ownerSVGElement.viewBox.baseVal, cx = 70 + (1000 - 80) * Math.max(0, Math.min(T, e)) / T; cn.setAttribute('x1', cx); cn.setAttribute('x2', cx); cn.setAttribute('y1', 26); cn.setAttribute('y2', vb.height - 18); cn.style.display = (e >= 0 && e <= T) ? '' : 'none'; }
@@ -552,6 +559,7 @@ window.FPLive = function (D) {
     if (t) r.setProperty('--hdr', t.offsetHeight + 'px');
   }
   window.addEventListener('resize', layoutVars);
+  if (window.ResizeObserver && $('top')) new ResizeObserver(layoutVars).observe($('top'));   // v2.0: header height changes (alerts, compact MAP header)
 
   /* ---------- views (hash routing): NOW button + the pack sequence strip + prev / next pager */
   var views = {}; document.querySelectorAll('.view').forEach(function (v) { views[v.dataset.view] = v; });
@@ -570,10 +578,13 @@ window.FPLive = function (D) {
     if (h === 'cockpit' && (window.innerWidth < 1000 || !views['route-map'])) h = 'now';   // split cockpit view: landscape iPad only
     var split = h === 'cockpit';
     document.body.classList.toggle('split', split);
+    document.body.classList.toggle('mapfs', h === 'route-map'); document.documentElement.classList.toggle('mapfs', h === 'route-map');   // v2.0: MAP tab full screen, compact header
     Object.keys(views).forEach(function (k) { views[k].hidden = split ? !(k === 'now' || k === 'route-map') : (k !== h); }); CUR = h;
     navA.forEach(function (a) { var o = a.dataset.v === h; a.classList.toggle('on', o); if (o) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     var cur = strip && strip.querySelector('a.on');
     if (cur) { var sr = strip.getBoundingClientRect(), cr = cur.getBoundingClientRect(); if (cr.left < sr.left || cr.right > sr.right) strip.scrollLeft += (cr.left + cr.width / 2) - (sr.left + sr.width / 2); }
+    var dto = $('dash-to'), tol = document.querySelector('label.to');   // v2.0: T/O time is entered once on DASH
+    if (dto && tol && !dto.contains(tol)) dto.appendChild(tol);
     pager(h); layoutVars(); window.scrollTo(0, 0); tick(true);
     if (h === 'waypoints') setTimeout(function () { jumpNext(false); }, 60);
     if (globe && (h === 'route-map' || split)) setTimeout(function () { globe.shown(); }, 0);
@@ -596,7 +607,7 @@ window.FPLive = function (D) {
 
   if (window.FPTools) try {
     TOOLS = window.FPTools({ D: D, S: S, P: P, save: save, savePrefs: savePrefs, el: el, isPlan: isPlan, toMin: toMin, hm: hm, zt: zt, mmss: mmss, inTxt: inTxt, isoZ: isoZ, esc: esc,
-      toast: toast, ask: ask, chime: chime, tick: tick, paintWpt: paintWpt, layoutVars: layoutVars, applyTheme: applyTheme, globe: function () { return globe; },
+      toast: toast, ask: ask, chime: chime, tick: tick, fcLeft: fcLeft, fcReset: fcReset, fcStop: fcStop, paintWpt: paintWpt, layoutVars: layoutVars, applyTheme: applyTheme, globe: function () { return globe; },
       cur: function () { return CUR; }, seq: SEQ, name: NAME, views: views, show: show });
   } catch (x) { if (window.console) console.error('FPTools', x); }
   applyTheme(); applyFs(); applySound(); show(); if (P.wake) wake();

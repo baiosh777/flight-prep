@@ -6,7 +6,7 @@ The app files hold **no flight data**. Flights are loaded from the Files app on 
 1. Make a free account at https://github.com (any device).
 2. Tap **+** (top right) → **New repository**. Name: `flightprep`. Visibility: **Public** (free Pages need public; the app files hold no company data). Tap **Create repository**.
 3. On the new repository page tap **uploading an existing file**. Pick all 21 files from the unzipped `flightprep_app` folder:
-   `index.html, app.css, app.js, sw.js, d3geo.js, fp_terrain.js, fp_globe.js, fp_live.js, fp_tools.js, fp_tools2.js, fp_mount.js, manifest.webmanifest, icon-192.png, icon-512.png, apple-touch-icon.png, inter-Regular.woff, inter-SemiBold.woff, inter-Bold.woff, inter-ExtraBold.woff`
+   `index.html, app.css, app.js, sw.js, d3geo.js, fp_terrain.js, fp_globe.js, fp_live.js, fp_tools.js, fp_tools2.js, fp_agc.js, fp_amap.js, fp_mount.js, manifest.webmanifest, icon-192.png, icon-512.png, apple-touch-icon.png, inter-Regular.woff, inter-SemiBold.woff, inter-Bold.woff, inter-ExtraBold.woff`
    (SETUP.md is optional). Tap **Commit changes**.
 4. **Settings** → **Pages** → Build and deployment: Source **Deploy from a branch**, Branch **main**, folder **/(root)** → **Save**.
 5. Wait 1–2 minutes. The page shows your address: `https://YOUR-NAME.github.io/flightprep/`
@@ -35,3 +35,17 @@ When Claude sends new app files, upload them to the same repository (they replac
 - Each flight keeps its own take-off time, ticks, done calls and fuel entries, on this iPad only.
 - If you delete the app from the home screen, iOS deletes its stored flights too – just load the files again.
 - Preparation aid only – the OFP, official Emirates documentation and ATC prevail.
+
+## Update to v2.0 (05 NOV 2026)
+1. Unzip `flightprep_app_v2.0.zip` in the Files app.
+2. In your repository: **Add file** → **Upload files** → pick **all 21** files of the folder (new: `fp_agc.js` and `fp_amap.js`; the others replace the old ones) → **Commit changes**.
+3. Wait 1–2 minutes, open the app while online → **Update now**. FLIGHTS shows "Flight Prep 2.0.0".
+4. Load the new flight file (e.g. `EK656_DXB-MLE_flight.json`). Older flight files still open, with the v1 layout.
+5. New in 2.0:
+   - **Compact header** on every page: NOW, phase, ELAPSED, ETA (UTC + local), running timers, UTC. The **take-off time is entered once on DASH** (tap ELAPSED to get there); no AIRBORNE button.
+   - **Timers**: the fuel check lives in Timers (Start / Done · restart / Stop); every running timer shows with its countdown in the header.
+   - **DASH**: registration and SELCAL, STD / ETA with runway and SID / STAR, short top threats with a button to the page with the details, **DIVERSION AIRPORTS** button.
+   - **Diversion**: one short line per airport; tap it for runways (landing distance), ILS, frequencies, weather, key NOTAMs, a short AOI / CCI summary and OFP fuel.
+   - **WAYPOINTS**: sector frequencies (North / South …) with the expected one first, CPDLC "LOGON … by …" highlighted, extra information behind the eye ("more").
+   - **DEPARTURE and ARRIVAL** tabs: brief, CCI / AOI and AGC one under the other. **Interactive AGC** that follows the app theme (light / dark / night); at Malé also an own **vector airport map** (Map | Lido chart).
+   - **MAP** tab full screen: side view, timeline and layer buttons fixed at the bottom, only the map moves.

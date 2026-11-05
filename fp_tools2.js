@@ -134,7 +134,7 @@ window.FPTools2 = function (X) {
     return '<p class="sub">From the OFP alternate block (distance, time, fuel from ' + esc(F.arr) + '), forecast at ' + esc(F.arr) + ' ETA + diversion time.</p>' + R3.map(function (r) {
       return '<div class="wxc"><div class="wxh"><b>' + esc(r.a.icao) + '</b> RWY ' + esc(r.a.rwy || '–') + ' <span class="tag ' + (r.sv == null ? '' : ['k-fc', 'k-etops', 'k-call'][r.sv]) + '">' + (r.sv == null ? 'no TAF' : SVN[r.sv]) + '</span><small>arr ' + hz(r.at) + '</small></div>' +
         '<div class="dvn"><b>' + r.a.nm + ' NM</b> · <b>' + hm(r.a.min) + '</b> · ' + (r.a.kg / 1000).toFixed(1) + ' t' + (r.a.route ? ' · ' + esc(r.a.route) : '') + ' · ' + r.nts + ' NOTAMs active then</div>' +
-        (r.w && r.w.groups ? atTxt(r.w, r.at) : '') + (r.w ? '<details class="dvt"><summary>METAR / TAF (OFP)</summary><code>' + esc(r.w.metar || '') + '</code><code>' + esc(r.w.taf || '') + '</code></details>' : '') + '</div>';
+        (r.w && r.w.groups ? atTxt(r.w, r.at) : '') + (X.aptFacts ? X.aptFacts(r.a.icao) : '') + (r.w ? '<details class="dvt"><summary>METAR / TAF (OFP)</summary><code>' + esc(r.w.metar || '') + '</code><code>' + esc(r.w.taf || '') + '</code></details>' : '') + '</div>';
     }).join('') + '<p class="note">OK / CHECK / POOR is the same simple decode as the TAF timeline – check against the alternate minima.</p>';
   }
   function cards(e, C, card) {
@@ -264,11 +264,63 @@ window.FPTools2 = function (X) {
       '<p class="note">Only units listed in the Lido tables; route FIRs without an entry (e.g. Entebbe, Muscat) have no published short code there.</p>' +
       ((D.crew_alert || []).length ? '<h3 class="shh">Crew alert – company NOTAMs (OFP)</h3>' + D.crew_alert.map(function (c) { return '<details class="nt"><summary><b>' + esc(c.id) + '</b> ' + esc(c.title) + '</summary><p>' + esc(c.x) + '</p></details>'; }).join('') : '');
   }
+  /* MEL: items added for this flight + the pilot parts of the B777 MEL text (D.mel, from the DocuNet capture) */
+  var MDB = D.mel && D.mel.items ? D.mel.items : null, melQ = '', melOpen = '';
+  function melNorm(no) { return String(no || '').toUpperCase().replace(/\s+/g, '').replace(/^MEL/, ''); }
+  function melFind(no) {               // '34-58-01B' -> that variant; '34-58-01' -> all variants of the item
+    no = melNorm(no); if (!MDB || !/^\d{2}-\d{2}-\d{2}/.test(no)) return null;
+    var it = MDB[no.slice(0, 8)]; if (!it) return null;
+    var v = no.length > 8 ? it.v.filter(function (x) { return x.id.indexOf(no) === 0; }) : it.v;
+    return { no: no.slice(0, 8), t: it.t, v: v.length ? v : it.v, exact: v.length > 0 };
+  }
+  function melRef(t) { return esc(t).replace(/\b(\d{2}-\d{2}-\d{2}(?:-\d{2})?[A-Z]?)\b/g, function (m) { return MDB && MDB[m.slice(0, 8)] ? '<button type="button" class="mref" data-act="melv" data-no="' + m + '">' + m + '</button>' : m; }); }
+  function melLines(L) { return '<ul class="mll">' + L.map(function (l) { var ind = /^[a-z]\.|^\d+\.|^[A-Z]\.(?!\w)|^NOTE/.test(l) ? (/^NOTE/.test(l) ? ' class="mn"' : (/^[a-z]\./.test(l) ? ' class="m2"' : (/^[A-Z]\./.test(l) ? ' class="m3"' : ''))) : ''; return '<li' + ind + '>' + melRef(l) + '</li>'; }).join('') + '</ul>'; }
+  function melVar(v) {
+    var tag = [v.iv ? 'Cat ' + v.iv : '', v.ins ? 'installed ' + v.ins : '', v.req ? 'required ' + v.req : '', v.pr].filter(Boolean).join(' · ');
+    return '<div class="melv"><div class="mvh"><b>' + esc(v.id) + '</b>' + (v.h ? ' ' + esc(v.h) : '') + (tag ? '<span class="mvt">' + esc(tag) + '</span>' : '') + '</div>' +
+      (v.c ? melLines(v.c) : '') +
+      (v.cd ? '<h4 class="mvs cd">Crew deferral (M-CD)</h4>' + melLines(v.cd) : (/M-CD/.test(v.pr) ? '<p class="note">(M-CD) text not found in the capture – check the MEL.</p>' : '')) +
+      (v.o ? '<h4 class="mvs o">Operations (O)</h4>' + melLines(v.o) : (/\(O\)/.test(v.pr) ? '<p class="note">(O) text not found in the capture – check the MEL.</p>' : '')) +
+      (v.on ? '<h4 class="mvs">Operations note</h4>' + melLines(v.on) : '') +
+      (v.pl && !/^As appropriate\.?$/i.test(v.pl.join(' ')) ? '<h4 class="mvs">Placard</h4>' + melLines(v.pl) : '') + '</div>';
+  }
+  function melText(no, open) {
+    var f = melFind(no); if (!f) return MDB && /^\d{2}-\d{2}-\d{2}/.test(melNorm(no)) ? '<p class="note">' + esc(no) + ' is not in the MEL text of this file.</p>' : '';
+    return '<details class="nt mlt"' + (open ? ' open' : '') + '><summary><b>MEL text</b> <small>' + esc(f.no) + ' ' + esc(f.t) + (f.exact && f.v.length === 1 ? '' : ' · ' + f.v.length + ' cases') + '</small></summary>' + f.v.map(melVar).join('') + '</details>';
+  }
+  var melBlob = null;
+  function melHits(q) {
+    q = (q || '').trim().toUpperCase(); if (!MDB || q.length < 2) return '';
+    var n = melNorm(q), keys = Object.keys(MDB), A1 = [], A2 = [];
+    if (!melBlob) { melBlob = {}; keys.forEach(function (k) { melBlob[k] = JSON.stringify(MDB[k].v).toUpperCase(); }); }
+    keys.forEach(function (k) {
+      var it = MDB[k];
+      if (k.indexOf(n) === 0 || n.indexOf(k) === 0 || it.t.toUpperCase().indexOf(q) >= 0 || it.v.some(function (v) { return v.id.indexOf(n) === 0 || (v.h || '').toUpperCase().indexOf(q) >= 0; })) A1.push(k);
+      else if (q.length >= 3 && melBlob[k].indexOf(q) >= 0) A2.push(k);
+    });
+    if (!A1.length && !A2.length) return '<p class="note">No MEL item matches “' + esc(q) + '”.</p>';
+    var li = function (k) { return '<li><button type="button" data-act="melv" data-no="' + k + '"><b>' + k + '</b> ' + esc(MDB[k].t) + '</button></li>'; };
+    return (A1.length ? '<ul class="mhl">' + A1.slice(0, 30).map(li).join('') + '</ul>' : '') +
+      (A2.length ? '<h3 class="shh">Mentioned in the text <small>' + A2.length + ' item' + (A2.length > 1 ? 's' : '') + '</small></h3><ul class="mhl">' + A2.slice(0, 30).map(li).join('') + '</ul>' : '');
+  }
   function melHtml() {
-    return '<p class="sub">' + (D.mel_ofp && D.mel_ofp.length ? 'OFP MEL / CDL items: ' + D.mel_ofp.map(esc).join(' · ') : 'No MEL / CDL items are listed in this OFP.') + ' Add the tech-log items here – they stay with this flight and show on NOW.</p>' +
-      '<ul class="mell">' + S.mel.map(function (m, i) { return '<li><b>' + esc(m.no) + '</b> ' + esc(m.title) + (m.note ? '<small>' + esc(m.note) + '</small>' : '') + '<button type="button" data-act="meld" data-i="' + i + '">Remove</button></li>'; }).join('') + '</ul>' +
-      '<div class="frm"><label>MEL item<input id="ml-n" maxlength="20" placeholder="e.g. 21-31-01"></label><label>Title<input id="ml-t" maxlength="80" placeholder="item title"></label><label>Ops note (O) / limits<input id="ml-o" maxlength="200" placeholder="what it means for this flight"></label><button type="button" class="pri" data-act="mela">Add</button></div>' +
-      '<p class="note">Text you type is yours – check it against the MEL / dispatch release.</p>';
+    var ofp = D.mel_ofp || [];
+    return '<p class="sub">' + (ofp.length ? 'OFP MEL / CDL items: ' + ofp.map(function (n) { return MDB ? '<button type="button" class="mref" data-act="melv" data-no="' + esc(n) + '">' + esc(n) + '</button>' : esc(n); }).join(' ') : 'No MEL / CDL items are listed in this OFP.') + ' Add the tech-log items here – they stay with this flight and show on NOW.</p>' +
+      '<ul class="mell">' + S.mel.map(function (m, i) { var f = melFind(m.no); return '<li><b>' + esc(m.no) + '</b> ' + esc(m.title || (f ? f.t : '')) + (function () { var t = f ? f.v.map(function (v) { return v.pr; }).filter(Boolean).filter(function (x, j, a) { return a.indexOf(x) === j; }).join(' / ') : ''; return t ? '<span class="mvt">' + esc(t) + '</span>' : ''; })() + (m.note ? '<small>' + esc(m.note) + '</small>' : '') + '<button type="button" data-act="meld" data-i="' + i + '">Remove</button>' + melText(m.no, false) + '</li>'; }).join('') + '</ul>' +
+      '<div class="frm"><label>MEL item<input id="ml-n" maxlength="20" placeholder="e.g. 21-31-01" autocomplete="off"></label><label>Title<input id="ml-t" maxlength="80" placeholder="' + (MDB ? 'filled from the MEL' : 'item title') + '"></label><label>Ops note / limits<input id="ml-o" maxlength="200" placeholder="what it means for this flight"></label><button type="button" class="pri" data-act="mela">Add</button></div>' +
+      (MDB ? '<h3 class="shh">Look up the MEL <small>number or words, e.g. 34-58 or GPS</small></h3><input id="ml-q" type="search" class="sqi" placeholder="MEL item or word…" value="' + esc(melQ) + '" autocomplete="off"><div id="ml-h">' + (melOpen ? melText(melOpen, true) + '<p class="mvadd"><button type="button" data-act="melp" data-no="' + esc(melOpen) + '">Add ' + esc(melOpen) + ' to this flight</button></p>' : melHits(melQ)) + '</div>' +
+        '<p class="note">MEL text: ' + esc(D.mel.src || '') + ' Pilot parts only: conditions, crew deferral (M-CD), operations (O), operations note, placard. Maintenance (M) text and 777F variants are left out – the MEL / dispatch release governs.</p>'
+        : '<p class="note">This flight file has no MEL text. Text you type is yours – check it against the MEL / dispatch release.</p>');
+  }
+  X.melFind = melFind;
+  function melAfter(b) {
+    if (b._mel) return; b._mel = 1;
+    b.addEventListener('input', function (e) {
+      if (!b.querySelector('#ml-h')) return;
+      if (e.target.id === 'ml-q') { melQ = e.target.value; melOpen = ''; b.querySelector('#ml-h').innerHTML = melHits(melQ); }
+      else if (e.target.id === 'ml-n') { var f = melFind(e.target.value), t = b.querySelector('#ml-t'); if (t && f && (!t.value || t.dataset.auto)) { t.value = f.t + (f.exact && f.v.length === 1 && f.v[0].h ? ' – ' + f.v[0].h : ''); t.dataset.auto = '1'; } }
+      else if (e.target.id === 'ml-t') delete e.target.dataset.auto;
+    });
   }
   function gndHtml() {
     var G2 = [['rep', 'Report'], ['brf', 'Crew briefing'], ['brd', 'Boarding'], ['dc', 'Doors closed']];
@@ -304,7 +356,7 @@ window.FPTools2 = function (X) {
     Promise.all(jobs).then(function () { X.rerenderWith(html()); });
   }
   /* ---------- optional pages with an on/off switch: CHARTS (SIGWX, wind/temp) and APPROACH (IAC for destination / alternates) */
-  var OPT = [['charts', 'Charts page', 'charts'], ['iac', 'Approach page', 'iac']];
+  var OPT = [['charts', 'Charts page', 'charts']];   // v2.0: approach page removed (user 05 NOV)
   OPT.forEach(function (o) { o.pos = A.seq.indexOf(o[0]); });
   function applyPages() {
     OPT.forEach(function (o) {
@@ -334,7 +386,7 @@ window.FPTools2 = function (X) {
     else if (k === 'etops') X.openSheet('etops', 'ETOPS', etopsHtml, { wide: true });
     else if (k === 'alt') X.openSheet('alt', 'Destination alternates', altHtml, { wide: true });
     else if (k === 'gnd') X.openSheet('gnd', 'Ground countdown', gndHtml);
-    else if (k === 'mel') X.openSheet('mel', 'MEL items', melHtml);
+    else if (k === 'mel') { if (x && x.no) { melOpen = melNorm(x.no); melQ = ''; } X.openSheet('mel', 'MEL items', melHtml, { wide: true, after: melAfter }); }
     else if (k === 'ct') X.openSheet('ct', 'Contacts / SATCOM', contactsHtml, { wide: true });
     else if (k === 'ab' || k === 'abbr') { if (x && x.t) abQ = x.t.split(' – ')[0]; X.openSheet('ab', 'Abbreviations', abbrHtml, { after: function (b) { b.querySelector('#ab-q').addEventListener('input', function () { abQ = this.value; b.querySelector('#ab-l').innerHTML = abList(abQ); }); } }); }
     else if (k === 'st') selfTest();
@@ -351,7 +403,9 @@ window.FPTools2 = function (X) {
     else if (a === 'ct') { cTab = b.dataset.t; X.rerender(); }
     else if (a === 'x-etops') open('etops'); else if (a === 'x-gnd') open('gnd'); else if (a === 'x-mel') open('mel');
     else if (a === 'gnds') { ['rep', 'brf', 'brd', 'dc'].forEach(function (k) { var v = ($('gn-' + k).value || '').replace(/\D/g, ''); if (v.length === 4 && +v.slice(0, 2) < 24 && +v.slice(2) < 60) S.gnd[k] = v; else delete S.gnd[k]; }); A.save(); A.tick(true); X.closeSheet(); A.toast('Ground times saved.'); }
-    else if (a === 'mela') { var n = $('ml-n').value.trim(), t = $('ml-t').value.trim(); if (!n && !t) return; S.mel.push({ no: n, title: t, note: $('ml-o').value.trim() }); A.save(); A.tick(true); X.rerender(); }
+    else if (a === 'mela') { var n = melNorm($('ml-n').value.trim()) || $('ml-n').value.trim(), t = $('ml-t').value.trim(); if (!n && !t) return; var mf = melFind(n); S.mel.push({ no: n, title: t || (mf ? mf.t : ''), note: $('ml-o').value.trim() }); A.save(); A.tick(true); X.rerender(); }
+    else if (a === 'melv') { melOpen = melNorm(b.dataset.no); if (!$('ml-h')) open('mel'); else { X.rerender(); var h = $('ml-h'); if (h && h.scrollIntoView) h.scrollIntoView({ block: 'start' }); } }
+    else if (a === 'melp') { var pf = melFind(b.dataset.no); if (!S.mel.some(function (m) { return melNorm(m.no) === melNorm(b.dataset.no); })) { S.mel.push({ no: melNorm(b.dataset.no), title: pf ? pf.t : '', note: '' }); A.save(); A.tick(true); } melOpen = ''; X.rerender(); }
     else if (a === 'meld') { S.mel.splice(+b.dataset.i, 1); A.save(); A.tick(true); X.rerender(); }
   }
   return { act: act, cards: cards, tick: function () { }, shown: function () { } };
