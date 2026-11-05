@@ -1,7 +1,7 @@
 /* Flight Prep - offline app shell. Stores flight files in IndexedDB, mounts the current flight, then hands over to FPLive (fp_live.js). */
 (function () {
   'use strict';
-  var APP_VERSION = '1.2.0 (05 NOV 2026)';
+  var APP_VERSION = '1.3.0 (05 NOV 2026)';
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -109,7 +109,16 @@
     function utc() { var d = new Date(), p = function (n) { return String(n).padStart(2, '0'); }; $('utc').textContent = p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds()); }
     utc(); setInterval(utc, 1000);
   }
-  renderList(); info();
+  /* old-flight cleanup (user 05 NOV 26): flights more than 5 days past their date are removed (not the open one) */
+  function cleanup() {
+    var lim = new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10);
+    return listMeta().then(function (list) {
+      var old = list.filter(function (m) { return m.id !== CUR && m.date && m.date < lim; });
+      return Promise.all(old.map(function (m) { try { localStorage.removeItem('fp:' + m.id); } catch (e) { } return delFlight(m.id); })).then(function () { return old.length; });
+    }).catch(function () { return 0; });
+  }
+  cleanup().then(function (n) { renderList(); if (n) msg(n + (n === 1 ? ' flight' : ' flights') + ' older than 5 days removed.', 'ok'); });
+  info();
   (CUR ? getFlight(CUR) : Promise.resolve(null)).then(function (rec) {
     if (rec) mount(rec);
     else { if (CUR) lsSet('fpapp:current', null); CUR = null; empty(); }

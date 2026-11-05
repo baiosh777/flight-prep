@@ -23,5 +23,6 @@ window.FPMount = function (rec, opt) {
   if (opt.app) h += '<span class="tsep" aria-hidden="true"></span><a href="#flights" data-v="flights" class="tflights">FLIGHTS</a>';
   $('tabs').innerHTML = h;
   var d = document.createElement('div'); d.innerHTML = rec.foot; $('foot').textContent = d.textContent;
+  window.FPRec = { built_utc: rec.built_utc, ofp: rec.ofp, id: rec.id };
   window.FPLive(rec.data);
 };

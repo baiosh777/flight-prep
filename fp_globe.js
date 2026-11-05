@@ -73,10 +73,26 @@ window.FPGlobe = function (host, D, L) {
 
   /* ---------- DOM */
   var SL = G.slop || null, CP = G.cpdlc || null, PR = G.profile || null;
-  var LAY = { slop: 'SLOP', cpdlc: 'CPDLC', ifbp: 'IFBP area', rings: 'Rings 420 NM', fir: 'FIR lines', apt: 'Airports', wpt: 'Waypoint names', acts: 'Action points', cty: 'Borders' };
+  var LAY = { slop: 'SLOP', cpdlc: 'CPDLC', ifbp: 'IFBP area', ncz: 'NOTAM / conflict', night: 'Night shadow', terr: 'Terrain', esc: 'Escape airports', rings: 'Rings 420 NM', fir: 'FIR lines', apt: 'Airports', wpt: 'Waypoint names', acts: 'Action points', cty: 'Borders' };
+  /* v1.3 layers: NOTAM / conflict areas (OFP en-route NOTAMs: the route part inside the FIR they name, plus town areas), escape airports (TEM chain) */
+  var NZ = [];
+  (D.rnotams || []).forEach(function (n) {
+    if (n.kind === 'info') return; var fi = null, tx = n.x.replace(/[^A-Z ]/g, '');
+    D.firs.forEach(function (f) { if (new RegExp('\\b' + f.name.replace(/[^A-Za-z]/g, '').toUpperCase() + ' FIR').test(tx)) fi = f; });
+    if (!fi) D.firs.forEach(function (f) { if (f.fir === n.fir) fi = f; });
+    if (!fi) return; var nx = D.firs[D.firs.indexOf(fi) + 1], z = null;
+    NZ.forEach(function (q) { if (q.fir === fi.fir && q.kind === n.kind) z = q; });
+    if (!z) { z = { fir: fi.fir, name: fi.name, kind: n.kind, a: fi.eet_min, b: nx ? nx.eet_min : TE, ns: [] }; NZ.push(z); }
+    z.ns.push(n);
+  });
+  var NA = (D.nareas || []).map(function (q) { return { q: q, geo: q.pts.map(function (p) { return d3.geoCircle().center([p[1], p[0]]).radius(q.r_nm / 60).precision(4)(); }) }; });
+  var ESC = D.chain.filter(function (c) { return /escape/i.test(c.note); }).map(function (c) { var a = null; G.apt.forEach(function (x) { if (x.icao === c.icao) a = x; }); return a ? { c: c, a: a } : null; }).filter(Boolean);
+  var TERR = null;   // terrain texture (fp_terrain.js: window.FP_TERRAIN = data URI of an equirectangular grey shaded-relief image)
+  if (window.FP_TERRAIN) { var ti = new Image(); ti.onload = function () { var cc = document.createElement('canvas'); cc.width = ti.width; cc.height = ti.height; var g2 = cc.getContext('2d'); g2.drawImage(ti, 0, 0); var rgba = g2.getImageData(0, 0, ti.width, ti.height).data, one = new Uint8Array(ti.width * ti.height); for (var q = 0; q < one.length; q++) one[q] = rgba[q * 4]; TERR = { w: ti.width, h: ti.height, d: one }; cc.width = cc.height = 1; SKEY = ''; req(); }; ti.src = window.FP_TERRAIN; }
+  if (!NZ.length && !NA.length) delete LAY.ncz; if (!ESC.length) delete LAY.esc; if (!window.FP_TERRAIN) delete LAY.terr;
   if (!IF) delete LAY.ifbp; if (!SL) delete LAY.slop; if (!CP) delete LAY.cpdlc;
   var EXCL = ['slop', 'cpdlc', 'ifbp'];   // route overlays: one at a time so the colours stay readable
-  var lay = { slop: false, cpdlc: false, ifbp: false, rings: true, fir: true, apt: true, wpt: true, acts: true, cty: true };
+  var lay = { slop: false, cpdlc: false, ifbp: false, ncz: true, night: true, terr: true, esc: true, rings: true, fir: true, apt: true, wpt: true, acts: true, cty: true };
   try { var ls = localStorage.getItem('fpapp:glay'); if (ls) lay = Object.assign(lay, JSON.parse(ls)); } catch (e) { }
   host.innerHTML =
     '<div class="gwrap"><canvas class="gcv" role="img" aria-label="Interactive route map. Drag to turn the Earth, pinch or double-tap to zoom, tap a symbol for details."></canvas>' +
@@ -104,7 +120,7 @@ window.FPGlobe = function (host, D, L) {
     C = { bg: v('--panel', '#181c24'), ocean: v('--map-ocean', '#10202f'), land: v('--map-land', '#2c3139'), coast: v('--map-coast', '#46505c'), border: v('--map-border', '#5d6672'),
       grat: v('--map-grat', 'rgba(255,255,255,.07)'), fir: v('--map-fir', '#e5534b'), route: v('--map-route', '#f1f5fa'), text: v('--fg', '#e9eef5'), muted: v('--muted', '#9aa5b4'),
       halo: v('--map-halo', 'rgba(8,14,22,.9)'), mag: v('--mag', '#e46bd8'), grn: v('--grn', '#5ccb72'), amb: v('--amb', '#f2b33d'), etops: v('--map-etops', '#e8832a'),
-      apt: v('--map-apt', '#8c96a3'), cyan: v('--cyan', '#6cc6e6'), font: v('--body', 'system-ui, sans-serif') };
+      apt: v('--map-apt', '#8c96a3'), red: v('--red', '#e5534b'), cyan: v('--cyan', '#6cc6e6'), font: v('--body', 'system-ui, sans-serif') };
     Ct = Date.now(); return C;
   }
   function visible() { return !!(host.offsetParent || host.classList.contains('gfull')); }
@@ -291,6 +307,7 @@ window.FPGlobe = function (host, D, L) {
           GPS.wid = navigator.geolocation.watchPosition(function (p) {
             var c = p.coords; GPS.fix = { lat: c.latitude, lon: c.longitude, acc: c.accuracy, spd: c.speed, hdg: c.heading, t: Date.now() }; GPS.msg = '';
             updBar(); refreshPop(false); req();
+            if (L.onFix) try { L.onFix(GPS.fix); } catch (x) { }   // v1.3: auto-tick by GPS
           }, function (er) {
             GPS.msg = er.code === 1 ? 'location not allowed here (works in the installed app – allow Location for it)' : (er.code === 2 ? 'no GPS fix (a Wi-Fi-only iPad has no GPS)' : 'no fix yet – still trying');
             updBar(); refreshPop(false);
@@ -464,6 +481,28 @@ window.FPGlobe = function (host, D, L) {
   }
   function rr(x, y, w, h, r) { gx.beginPath(); gx.moveTo(x + r, y); gx.arcTo(x + w, y, x + w, y + h, r); gx.arcTo(x + w, y + h, x, y + h, r); gx.arcTo(x, y + h, x, y, r); gx.arcTo(x, y, x + w, y, r); gx.closePath(); }
   function tri(p, s) { gx.beginPath(); gx.moveTo(p[0], p[1] - s); gx.lineTo(p[0] + s * 0.9, p[1] + s * 0.6); gx.lineTo(p[0] - s * 0.9, p[1] + s * 0.6); gx.closePath(); }
+  function anti(ms) {   // anti-solar point (night centre) for a time - NOAA low-precision sun position
+    var n = ms / 864e5 - 10957.5, Lm = (280.46 + 0.9856474 * n) % 360, g = ((357.528 + 0.9856003 * n) % 360) * PI / 180;
+    var lam = (Lm + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * PI / 180, eps = (23.439 - 4e-7 * n) * PI / 180;
+    var dec = Math.asin(Math.sin(eps) * Math.sin(lam)) * 180 / PI, ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam)) * 180 / PI;
+    var eot = ((Lm - ra + 540) % 360) - 180, um = ((ms % 864e5) + 864e5) % 864e5 / 6e4, lon = -(um - 720 + eot * 4) / 4;
+    lon = ((lon + 540) % 360) - 180; return [((lon + 360) % 360) - 180, -dec];
+  }
+  var tLast = 0, tTimer = null, TC = null;
+  function terrain(x, c, LAND) {   // grey shaded relief over land, slightly darkened / lightened - skipped while the globe is moving
+    var q0 = Math.max(0.04, 0.6 / k), tk = [W, H, Math.round(rot[0] / q0), Math.round(rot[1] / q0), k.toFixed(3), c.land].join('|');
+    if (TC && TC.key === tk) { x.save(); x.beginPath(); path(LAND); x.clip(); x.drawImage(TC.cv, 0, 0, W, H); x.restore(); return; }
+    var now = Date.now(); if (now - tLast < 250) { tLast = now; clearTimeout(tTimer); tTimer = setTimeout(function () { SKEY = ''; tLast = 0; req(); }, 300); return; } tLast = now;
+    var sc = 3, w = Math.ceil(W / sc), h = Math.ceil(H / sc), im = x.createImageData(w, h), o = im.data, inv = proj.invert, dk = /^#?[0-3]/.test(c.land.replace('#', '')) || c.land.indexOf('rgb') < 0 && parseInt(c.land.slice(1, 3), 16) < 128;
+    for (var j = 0; j < h; j++) for (var i = 0; i < w; i++) {
+      var p = inv([i * sc + sc / 2, j * sc + sc / 2]); if (!p || isNaN(p[0])) continue; if (d3.geoDistance(p, center()) > PI / 2 - 0.01) continue;
+      var u = Math.floor((p[0] + 180) / 360 * TERR.w) % TERR.w, v = Math.min(TERR.h - 1, Math.max(0, Math.floor((90 - p[1]) / 180 * TERR.h))), s0 = TERR.d[v * TERR.w + u];
+      var dv = (s0 - 128) / 100, k2 = (j * w + i) * 4; if (dv > -0.03 && dv < 0.03) continue;   // flat ground: land colour unchanged
+      if (dv < 0) { o[k2] = o[k2 + 1] = o[k2 + 2] = 0; o[k2 + 3] = Math.min(dk ? 80 : 66, -dv * (dk ? 95 : 72)); } else { o[k2] = o[k2 + 1] = o[k2 + 2] = 255; o[k2 + 3] = Math.min(dk ? 34 : 48, dv * (dk ? 48 : 66)); }
+    }
+    var tc = document.createElement('canvas'); tc.width = w; tc.height = h; tc.getContext('2d').putImageData(im, 0, 0); TC = { key: tk, cv: tc };
+    x.save(); x.beginPath(); path(LAND); x.clip(); x.imageSmoothingEnabled = true; x.drawImage(tc, 0, 0, W, H); x.restore();
+  }
   function skey() { return [W, H, DPR, rot[0].toFixed(3), rot[1].toFixed(3), k.toFixed(4), themeVer, JSON.stringify(lay), pop.hidden ? '' : pop.offsetWidth + 'x' + pop.offsetHeight].join('|'); }
   function renderStatic(c) {
     if (SCV.width !== cv.width || SCV.height !== cv.height) { SCV.width = cv.width; SCV.height = cv.height; }
@@ -473,6 +512,7 @@ window.FPGlobe = function (host, D, L) {
     x.beginPath(); path(SPHERE); x.fillStyle = c.ocean; x.fill();
     x.beginPath(); path(GRAT); x.strokeStyle = c.grat; x.lineWidth = 0.7; x.stroke();
     x.beginPath(); path(B.land); x.fillStyle = c.land; x.fill(); x.strokeStyle = c.coast; x.lineWidth = 0.8; x.stroke();
+    if (lay.terr && TERR) terrain(x, c, B.land);
     if (lay.cty) { x.beginPath(); path(B.bord); x.strokeStyle = c.border; x.lineWidth = 0.6; x.stroke(); }
     x.beginPath(); path(SPHERE); x.strokeStyle = c.coast; x.lineWidth = 1.2; x.stroke();
     LBL = []; HITS = []; RES = []; SWP = [];
@@ -482,7 +522,7 @@ window.FPGlobe = function (host, D, L) {
       x.setLineDash([7, 5]);
       G.fir.forEach(function (f) { x.beginPath(); path(f.geo); x.strokeStyle = c.fir; x.globalAlpha = f.r ? 0.95 : 0.5; x.lineWidth = f.r ? 1.7 : 1.1; x.stroke(); });
       x.setLineDash([]); x.globalAlpha = 1;
-      G.firlab.forEach(function (l) { var ll = [l[2], l[1]]; if (!vis(ll)) return; var p = proj(ll); if (onScreen(p)) label(l[0], p, { center: true, pri: 2, col: c.fir, font: 'italic 600 11px ' + c.font, size: 12 }); });
+      G.firlab.forEach(function (l) { var ll = [l[2], l[1]]; if (!vis(ll)) return; var p = proj(ll), cf = D.comms_fir && D.comms_fir[l[0].slice(0, 4)], fq = cf && cf.vhf ? cf.vhf.match(/\d{3}\.\d{1,3}/g) : null; if (onScreen(p)) label(l[0] + (fq ? ' · ' + fq.join(' / ') : ''), p, { center: true, pri: 2, col: c.fir, font: 'italic 600 11px ' + c.font, size: 12 }); });
     }
     if (IF && lay.ifbp) {
       var cy = c.cyan;
@@ -529,6 +569,24 @@ window.FPGlobe = function (host, D, L) {
       RINGS.forEach(function (r) { x.beginPath(); path(r.geo); x.strokeStyle = r.a.col; x.globalAlpha = 0.75; x.lineWidth = 1.4; x.stroke(); });
       x.setLineDash([]); x.globalAlpha = 1;
     }
+    if (lay.ncz) {
+      NA.forEach(function (n) { n.geo.forEach(function (g3, j) { x.beginPath(); path(g3); x.fillStyle = c.amb; x.globalAlpha = 0.13; x.fill(); x.globalAlpha = 0.9; x.setLineDash([4, 4]); x.strokeStyle = c.amb; x.lineWidth = 1.2; x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
+        var pc = n.q.pts[j], pp2 = vis([pc[1], pc[0]]) ? proj([pc[1], pc[0]]) : null; if (pp2 && j === 0) { HITS.push({ x: pp2[0], y: pp2[1], r: 16, html: (function (q) { return function () { return '<b class="gph">⚠ ' + esc(q.id) + ' (' + esc(q.fir) + ')</b><div>' + esc(q.label) + '</div><div class="gpn">Circles: ' + q.r_nm + ' NM around the towns the NOTAM names – indicative only.</div>'; }; })(n.q) }); } }); });
+      NZ.forEach(function (z) {
+        x.beginPath(); path(subLine(z.a, z.b)); x.strokeStyle = z.kind === 'conflict' ? c.red : c.amb; x.lineWidth = z.kind === 'conflict' ? 16 : 11; x.globalAlpha = z.kind === 'conflict' ? 0.35 : 0.3;
+        if (z.kind !== 'conflict') x.setLineDash([10, 7]); x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
+        var m = posAt((z.a + z.b) / 2); if (!vis(m)) return; var pm = proj(m);
+        x.beginPath(); x.moveTo(pm[0], pm[1] - 11); x.lineTo(pm[0] + 10, pm[1] + 7); x.lineTo(pm[0] - 10, pm[1] + 7); x.closePath(); x.fillStyle = z.kind === 'conflict' ? c.red : c.amb; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke();
+        x.fillStyle = '#fff'; x.font = '800 11px ' + c.font; x.textAlign = 'center'; x.fillText('!', pm[0], pm[1] + 5); x.textAlign = 'left';
+        HITS.push({ x: pm[0], y: pm[1], r: 16, html: function () { return '<b class="gph">⚠ ' + (z.kind === 'conflict' ? 'Security / conflict' : 'GNSS interference') + ' – ' + esc(z.fir) + ' ' + esc(z.name) + ' FIR</b><div>Route in this FIR ' + hm(z.a) + '–' + hm(z.b) + ' (' + zt(L.toMin() + z.a) + '–' + zt(L.toMin() + z.b) + ')</div>' +
+          z.ns.map(function (n) { return '<div class="gpx2"><b>' + esc(n.id) + '</b> ' + esc(n.x.length > 420 ? n.x.slice(0, 420) + '…' : n.x) + '</div>'; }).join('') + '<div class="gpn">OFP en-route NOTAMs. The band marks the planned route inside the FIR the NOTAM names, not an exact area.</div>'; } });
+      });
+    }
+    if (lay.esc) ESC.forEach(function (o) {
+      var mid = posAt((Math.max(0, o.c.a) + Math.min(TE, o.c.b)) / 2), al = [o.a.lon, o.a.lat];
+      x.beginPath(); path({ type: 'LineString', coordinates: [posAt(Math.max(0, o.c.a)), al, posAt(Math.min(TE, o.c.b))] }); x.setLineDash([2, 5]); x.strokeStyle = c.amb; x.lineWidth = 1.6; x.globalAlpha = 0.85; x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
+      if (vis(al)) { var pa = proj(al); label('ESC ' + o.a.icao, [pa[0] + 8, pa[1] + 14], { col: c.amb }); HITS.push({ x: pa[0], y: pa[1], r: 12, html: function () { return '<b class="gph">Escape airport ' + esc(o.a.icao) + '</b><div>TEM chain: ' + esc(o.c.cls) + ', ' + hm(o.c.a) + '–' + hm(o.c.b) + ' (' + esc(o.c.note) + ')</div><div class="gpn">Dotted lines: the route part it covers. Detailed escape routes / drift-down strategies: OFP RAIG H1 / H2 and OM-C.</div>'; } }); }
+    });
     (G.etseg || []).forEach(function (s) { x.beginPath(); path(subLine(s[0], s[1])); x.strokeStyle = c.etops; x.lineWidth = 12; x.globalAlpha = 0.85; x.stroke(); x.globalAlpha = 1; });
     x.beginPath(); path(ROUTE); x.strokeStyle = c.halo; x.lineWidth = 5.5; x.stroke();
     x.beginPath(); path(ROUTE); x.strokeStyle = c.route; x.lineWidth = 2.4; x.stroke();
@@ -595,6 +653,7 @@ window.FPGlobe = function (host, D, L) {
     x.setTransform(DPR, 0, 0, DPR, 0, 0); x.setLineDash([]); x.lineCap = 'round'; x.lineJoin = 'round';
     gx = ctx; path = pathD; HITS = SHITS.slice(); LBL = []; RES = [];
     var e = curE(), eC = Math.max(0, Math.min(T, e));
+    if (lay.night) { var an = anti(Date.now() + (e - L.el()) * 60000); [90, 84, 78].forEach(function (r) { x.beginPath(); path(d3.geoCircle().center(an).radius(r).precision(3)()); x.fillStyle = 'rgba(0,6,24,' + (r === 90 ? 0.22 : 0.12) + ')'; x.fill(); }); }
     if (eC > 0) { x.beginPath(); path(subLine(0, eC)); x.strokeStyle = c.grn; x.lineWidth = 3.2; x.stroke(); }
     if (e >= 0 && e < T) { var sg = seg(eC); x.beginPath(); path({ type: 'LineString', coordinates: [posAt(eC), RC[sg.k + 1]] }); x.strokeStyle = c.mag; x.lineWidth = 3.6; x.stroke(); }
     SWP.forEach(function (w) { if (w.e > eC) return; tri(w.p, w.s); x.fillStyle = c.grn; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke(); });
@@ -691,6 +750,15 @@ window.FPGlobe = function (host, D, L) {
         vs: PR ? lvlAt(Math.min(T, eC + 2)) - lvlAt(Math.max(0, eC - 2)) : 0, tod: tod };
     },
     showIfbp: function () { if (IF) showPop(ifbpHtml(), true, 'ifbp'); },
+    /* v1.3 helpers: best position now (GPS fix when there is one, else the elapsed-time position), along-track of a GPS fix, planned GS */
+    here: function (e) { var f = gpsFix(), eC = Math.max(0, Math.min(T, e)); if (f) { var s = snap([f.lon, f.lat]); return { ll: [f.lon, f.lat], src: 'gps', acc: f.acc, gs: gsOf(f, s).v, along: CUM[s.k] + s.at, xt: s.xt }; }
+      return { ll: posAt(eC), src: L.isPlan() ? 'plan' : 'time', gs: this.gsAt(eC), along: distAt(eC), xt: 0 }; },
+    along: function (f) { var s = snap([f.lon, f.lat]); return { d: CUM[s.k] + s.at, xt: s.xt, gs: gsOf(f, s) }; },
+    alongOf: function (n) { for (var j = 0; j < RT.length; j++) if (RT[j].n === n) return CUM[j]; return null; },
+    gsAt: function (e) { var s = seg(Math.max(0, Math.min(T, e))), dt = RT[s.k + 1].e - RT[s.k].e; return dt > 0 ? (CUM[s.k + 1] - CUM[s.k]) / dt * 60 : null; },
+    focusApt: function (icao) { var a = null; G.apt.forEach(function (x) { if (x.icao === icao) a = x; }); if (!a) return; setFollow(false); fly([a.lon, a.lat], Math.max(k, 3.2), 550); showPop(aptHtml(a)); },
+    gps: function (on) { if (on !== undefined && !!on !== GPS.on) gpsSet(!!on); return GPS.on; },
+    total: function () { return CUM[CUM.length - 1]; },
     project: function (lon, lat) { return vis([lon, lat]) ? proj([lon, lat]) : null; }
   };
 };
