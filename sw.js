@@ -1,6 +1,6 @@
 /* Flight Prep service worker: keeps the app shell on the device so it opens with no internet.
    Bump VERSION when any app file changes - the app then shows "A new version is ready". Flight files are in IndexedDB, not here. */
-var VERSION = 'fpapp-1.1.0';
+var VERSION = 'fpapp-1.2.0';
 var ASSETS = ['./', 'index.html', 'app.css', 'd3geo.js', 'fp_globe.js', 'fp_live.js', 'fp_mount.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(ASSETS); })); });
 self.addEventListener('activate', function (e) {

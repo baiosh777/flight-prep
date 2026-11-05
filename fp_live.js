@@ -5,7 +5,7 @@ window.FPLive = function (D) {
   'use strict';
   var F = D.flight, T = F.trip, FC_MIN = 55;
   var KEY = 'fp:' + F.id, PKEY = 'fpapp:prefs';
-  function def() { return { to: null, passed: -1, times: {}, done: {}, fuel: {}, fc: null, fcLog: [] }; }
+  function def() { return { to: null, passed: -1, times: {}, done: {}, fuel: {}, fc: null, fcLog: [], ib: null }; }
   var S = def();
   try { var raw = localStorage.getItem(KEY); if (raw) S = Object.assign(def(), JSON.parse(raw)); } catch (e) { }
   if (!Array.isArray(S.fcLog)) S.fcLog = [];
@@ -119,14 +119,14 @@ window.FPLive = function (D) {
     var mc = r.mora == null ? '' : (r.mora > 10000 ? 'red' : (r.mora > 5000 ? 'amb' : ''));
     tr.innerHTML = '<td class="eet"><span class="ck" aria-hidden="true"></span><span class="et">' + (r.eet == null ? esc(r.label || '-') : hm(r.eet)) + '</span><div class="st"></div></td>' +
       '<td class="wp">' + esc(r.wpt) + '</td><td class="fir ' + r.fc + '">' + (r.bnd ? '▶ ' : '') + esc(r.fir) + '<small>' + esc(r.firname) + '</small></td>' +
-      '<td>' + r.call + '</td><td class="c-cpdlc">' + r.cpdlc + '</td><td>' + r.special + '</td><td>' + r.threat + '</td><td class="c-div">' + r.divert + '</td>' +
+      '<td class="cmt">' + r.call + '</td><td>' + r.special + '</td><td>' + r.threat + '</td>' +
       '<td class="mora ' + mc + '">' + (r.mora == null ? '-' : r.mora) + '</td>' +
       '<td class="fu">' + (r.fmin == null ? '-' : r.fmin.toFixed(1) + '<br><b>' + r.fplan.toFixed(1) + '</b>') + '</td>';
-    tr.addEventListener('click', function (ev) { if (ev.target.closest('a')) return; tap(r.i); });
+    tr.addEventListener('click', function (ev) { if (ev.target.closest('a, button')) return; tap(r.i); });
     tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r.i); } });
     tb.appendChild(tr); trs.push(tr);
   });
-  nowRow = document.createElement('tr'); nowRow.className = 'nowline'; nowRow.innerHTML = '<td colspan="10"><div></div></td>';
+  nowRow = document.createElement('tr'); nowRow.className = 'nowline'; nowRow.innerHTML = '<td colspan="8"><div></div></td>';
   function tap(i) {
     if (i <= S.passed) { for (var j = i; j <= S.passed; j++) delete S.times[j]; S.passed = i - 1; }
     else { S.times[i] = new Date().toISOString(); S.passed = i; }
@@ -161,10 +161,6 @@ window.FPLive = function (D) {
     var r = tr.getBoundingClientRect(), top = $('top').offsetHeight;
     window.scrollTo({ top: Math.max(0, window.scrollY + r.top - top - 90), behavior: smooth ? 'smooth' : 'auto' });
   }
-  function isCompact() { return P.cols === 'compact' || (P.cols === 'auto' && window.innerWidth < 1000); }
-  function applyCols() { var c = isCompact(); if (wtab) wtab.classList.toggle('compact', c); var t = 'Columns: ' + (c ? 'compact' : 'all'); if ($('cols')) $('cols').textContent = 'Waypoint ' + t.toLowerCase(); if ($('wcols')) $('wcols').textContent = t; }
-  function toggleCols() { P.cols = isCompact() ? 'all' : 'compact'; savePrefs(); applyCols(); }
-  on('cols', 'click', toggleCols); on('wcols', 'click', toggleCols);
 
   /* ---------- calls / deadlines */
   var dls = Array.prototype.slice.call(document.querySelectorAll('.dl'));
@@ -181,6 +177,7 @@ window.FPLive = function (D) {
     var b = ev.target.closest('[data-done],[data-act]'); if (!b) return;
     if (b.dataset.done) { ev.preventDefault(); toggleDone(b.dataset.done, true); }
     else if (b.dataset.act === 'fc') { ev.preventDefault(); fcReset(); }
+    else if (b.dataset.act === 'ib') { ev.preventDefault(); ibReset(); }
   });
   function paintCalls(e) {
     dls.forEach(function (li) {
@@ -208,6 +205,13 @@ window.FPLive = function (D) {
     var left = fcLeft();
     if (left !== null && left <= 300) A.unshift({ k: 'fc', cls: left <= 0 ? 'red' : 'amb', fc: true });
     if (left !== null && left <= 0 && left > -30 && !fired['fc' + S.fc]) { fired['fc' + S.fc] = 1; chime(3); }
+    var gI = live ? inIfbp(e) : null, il = ibLeft();
+    if (gI && e >= gI.a && (il === null || il <= 120)) {
+      var due = il !== null && il <= 0;
+      A.push({ k: 'ib' + (due ? 'd' : (il === null ? 'n' : 's')), cls: due ? 'red' : 'amb', ib: true });
+      if (il === null && !fired['ibE' + gI.a]) { fired['ibE' + gI.a] = 1; chime(1); }
+      if (due && il > -30 && !fired['ib' + S.ib]) { fired['ib' + S.ib] = 1; chime(2); }
+    }
     A = A.slice(0, 3);
     var box = $('alert');
     if (box) {
@@ -215,18 +219,21 @@ window.FPLive = function (D) {
       if (box._sig !== sig) {
         box._sig = sig;
         box.innerHTML = A.map(function (a) {
+          if (a.ib) return '<div class="al ' + a.cls + '"><span class="alk">IFBP</span><span class="alw"><b>IFBP 126.9 broadcast</b> <span class="alc" data-ib="1"></span></span><button type="button" data-act="ib">Broadcast done</button></div>';
           if (a.fc) return '<div class="al ' + a.cls + '"><span class="alk">FUEL</span><span class="alw"><b>Fuel check</b> <span class="alc" data-fc="1"></span></span><button type="button" data-act="fc">Done · restart 55:00</button></div>';
-          return '<div class="al ' + a.cls + '"><span class="alk">CALL</span><a class="alw" href="#calls"><b>' + esc(a.d.fir) + ' ' + esc(a.d.name) + '</b> by ' + hm(a.d.eet) +
+          return '<div class="al ' + a.cls + '"><span class="alk">CALL</span><a class="alw" href="#waypoints"><b>' + esc(a.d.fir) + ' ' + esc(a.d.name) + '</b> by ' + hm(a.d.eet) +
             ' · <span class="alc" data-eet="' + a.d.eet + '"></span><small>' + esc(a.d.text) + '</small></a><button type="button" data-done="' + esc(a.d.id) + '">Done</button></div>';
         }).join('');
         box.hidden = !A.length; layoutVars();
       }
       box.querySelectorAll('.alc').forEach(function (c) {
-        if (c.dataset.fc) { var l = fcLeft(); c.textContent = l > 0 ? 'in ' + mmss(l) : 'DUE +' + mmss(-l); } else c.textContent = inTxt(+c.dataset.eet - e);
+        if (c.dataset.fc) { var l = fcLeft(); c.textContent = l > 0 ? 'in ' + mmss(l) : 'DUE +' + mmss(-l); }
+        else if (c.dataset.ib) { var l2 = ibLeft(); c.textContent = l2 === null ? '– none logged in this area yet' : (l2 > 0 ? 'in ' + mmss(l2) : 'DUE +' + mmss(-l2)); }
+        else c.textContent = inTxt(+c.dataset.eet - e);
       });
     }
     var nc = 0; if (live) D.deadlines.forEach(function (d) { var dd = d.eet - e; if (!S.done[d.id] && dd <= 10 && dd >= -15) nc++; });
-    badge('calls', nc ? String(nc) : '', A.some(function (a) { return !a.fc && a.cls === 'red'; }) ? 'red' : 'amb');
+    badge('waypoints', nc ? String(nc) : '', A.some(function (a) { return !a.fc && a.cls === 'red'; }) ? 'red' : 'amb');
   }
   function badge(v, txt, cls) {
     var a = document.querySelector('#tabs a[data-v="' + v + '"]'); if (!a) return;
@@ -273,23 +280,81 @@ window.FPLive = function (D) {
     TL.innerHTML = s;
   })();
 
-  /* ---------- NOW screen: next action, up-next list, cards */
-  var KIND = { call: 'CALL', fir: 'FIR', wpt: 'WPT', level: 'LEVEL', dp: 'DP', etops: 'ETOPS', descent: 'DESCENT', landing: 'LAND', fc: 'FUEL' };
+  /* ---------- NOW screen: next action, status strip, up-next list, cards */
+  var KIND = { call: 'CALL', fir: 'FIR', wpt: 'WPT', level: 'LEVEL', dp: 'DP', etops: 'ETOPS', descent: 'DESCENT', landing: 'LAND', fc: 'FUEL', ib: 'IFBP' };
   function items(e) {
-    var it = [], live = true, bndEet = {};
-    D.rows.forEach(function (r) { if (r.bnd && r.eet != null) bndEet[r.eet] = 1; });
+    var it = [];
     D.deadlines.forEach(function (d) { if (!S.done[d.id] && d.eet >= e - 15) it.push({ k: 'c:' + d.id, t: d.eet, what: d.fir + ' ' + d.name + ': ' + d.text, kind: 'call', id: d.id }); });
-    D.events.forEach(function (ev, i) { if (ev.eet_min > e) it.push({ k: 'e:' + i, t: ev.eet_min, what: ev.text, kind: ev.kind }); });
-    D.firs.forEach(function (f) { if (f.eet_min > e && !bndEet[f.eet_min]) it.push({ k: 'f:' + f.fir, t: f.eet_min, what: 'Enter ' + f.fir + ' ' + f.name + ' FIR', kind: 'fir' }); });
-    D.rows.forEach(function (r) { if (r.eet != null && r.eet > e) it.push({ k: 'w:' + r.i, t: r.eet, what: r.wpt + (r.bnd ? ' ▶ ' + r.fir + ' ' + r.firname : ''), kind: r.bnd ? 'fir' : 'wpt' }); });
+    // decompression DPs are planning information (user 05 NOV 26) - not in the in-flight list
+    D.events.forEach(function (ev, i) { if (ev.eet_min > e && ev.kind !== 'dp') it.push({ k: 'e:' + i, t: ev.eet_min, what: ev.text, kind: ev.kind }); });
+    // FIR entries: one line per boundary (the waypoint row when it is within 6 min of the FPL EET)
+    D.firs.forEach(function (f) {
+      if (f.eet_min <= e || f.eet_min === 0) return;   // the departure FIR is not an 'entry'
+      var row = null; D.rows.forEach(function (r) { if (!row && r.bnd && r.fir === f.fir && r.eet != null && Math.abs(r.eet - f.eet_min) <= 6) row = r; });
+      if (!row) it.push({ k: 'f:' + f.fir, t: f.eet_min, what: 'Enter ' + f.fir + ' ' + f.name + ' FIR', kind: 'fir' });
+    });
+    D.rows.forEach(function (r) {
+      if (r.eet == null || r.eet <= e) return;
+      var f = null; if (r.bnd) D.firs.forEach(function (x) { if (x.fir === r.fir) f = x; });
+      it.push({ k: 'w:' + r.i, t: r.eet, what: r.wpt + (r.bnd ? ' ▶ ' + r.fir + ' ' + r.firname + (f && f.eet_min !== r.eet ? ' (FIR ' + hm(f.eet_min) + ')' : '') : ''), kind: r.bnd ? 'fir' : 'wpt' });
+    });
     var left = fcLeft(); if (left !== null) it.push({ k: 'fc', t: e + left / 60, what: 'Fuel check due (55-min timer)', kind: 'fc' });
+    var g = inIfbp(e), il = ibLeft(); if (g && e >= g.a && il !== null) it.push({ k: 'ib', t: e + il / 60, what: 'IFBP broadcast due (20-min timer)', kind: 'ib' });
     it.sort(function (a, b) { return a.t - b.t; });
     return it;
   }
-  function stCls(x, e) { var d = x.t - e; if (x.kind === 'call' || x.kind === 'fc') return d < 0 ? 'red' : (d <= 10 ? 'amb' : ''); return ''; }
+  function stCls(x, e) { var d = x.t - e; if (x.kind === 'call' || x.kind === 'fc' || x.kind === 'ib') return d < 0 ? 'red' : (d <= (x.kind === 'ib' ? 2 : 10) ? 'amb' : ''); return ''; }
   function nextRowByTime(e) { for (var k = 0; k < D.rows.length; k++) if (D.rows[k].eet != null && D.rows[k].eet > e) return D.rows[k]; return null; }
-  function card(t, k, kc, p) { return '<div class="card"><h4>' + t + '</h4><div class="k ' + (kc || '') + '">' + k + '</div>' + (p ? '<p>' + p + '</p>' : '') + '</div>'; }
+  var NEWT = '';   // 05 NOV 26: the suggested items were all kept by the user - no NEW tags any more
+  function card(key, t, k, kc, p, extra) { return { k: key, h: '<div class="card' + (kc === 'red' ? ' cred' : (kc === 'amb' ? ' camb' : '')) + '"><h4>' + t + '</h4><div class="k ' + (kc || '') + '">' + k + '</div>' + (p ? '<p>' + p + '</p>' : '') + (extra || '') + '</div>' }; }
   function cdTxt(d) { return d < 0 ? '-' + hm(Math.ceil(-d)) : hm(Math.ceil(d)); }
+  function putCards(list) {   // only the cards whose content changed are replaced (keeps taps on their buttons reliable)
+    var box = $('nowcards'), keys = list.map(function (c) { return c.k; }).join('|');
+    if (box._keys !== keys) { box._keys = keys; box.innerHTML = list.map(function (c) { return '<div data-ck="' + c.k + '">' + c.h + '</div>'; }).join(''); box._h = list.map(function (c) { return c.h; }); return; }
+    list.forEach(function (c, i) { if (box._h[i] !== c.h) { box.children[i].innerHTML = c.h; box._h[i] = c.h; } });
+  }
+  /* sun elevation (NOAA approximation, as tool2/night.py) - day / night for HF and the overview */
+  function sunEl(lat, lon, ms) {
+    var r = Math.PI / 180, n = ms / 86400000 + 2440587.5 - 2451545.0, L = (280.460 + 0.9856474 * n) % 360, g = ((357.528 + 0.9856003 * n) % 360) * r;
+    var lam = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * r, eps = (23.439 - 0.0000004 * n) * r;
+    var dec = Math.asin(Math.sin(eps) * Math.sin(lam)), ra = Math.atan2(Math.cos(eps) * Math.sin(lam), Math.cos(lam));
+    var gmst = (18.697374558 + 24.06570982441908 * n) % 24, ha = (gmst * 15 + lon) * r - ra, la = lat * r;
+    return Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(ha)) / r;
+  }
+  function msAt(e) { return Date.now() + (e - el()) * 60000; }
+  function sunAt(e) { if (!globe) return null; var p = globe.pos(e); return sunEl(p[1], p[0], msAt(e)); }   // position on the route, real time
+  function segOf(list, fir) { for (var j = 0; list && j < list.length; j++) if (list[j].fir === fir) return list[j]; return null; }
+  function chip(lab, val, cls, isNew) { return '<span class="sc ' + (cls || '') + '"><b>' + lab + '</b> ' + val + (isNew && NEWT ? ' ' + NEWT : '') + '</span>'; }
+  function renderStrip(e) {
+    var box = $('nowstrip'); if (!box) return;
+    var eC = Math.max(0, Math.min(T, e)), inf = globe ? globe.info(eC) : null, h = '', cf = curFir(Math.max(0, e)), nf = null, air = e >= 0 && e <= T;
+    D.firs.forEach(function (f) { if (!nf && f.eet_min > Math.max(0, e)) nf = f; });
+    if (e < 0) h += chip('ON GROUND', 'T/O in ' + hm(Math.ceil(-e)) + (isPlan() ? ' (planned)' : ''), '');
+    else if (e > T) h += chip('LANDED', 'planned ' + zt(toMin() + T), '');
+    else if (inf && inf.lvl != null) h += chip(inf.vs > 300 ? 'CLIMB' : (inf.vs < -300 ? 'DESCENT' : 'CRUISE'), (inf.lvl >= 10000 ? 'FL' + String(Math.round(inf.lvl / 100)).padStart(3, '0') : Math.round(inf.lvl / 100) * 100 + ' ft') + ' <small>plan</small>', '', true);
+    if (cf && e <= T) h += chip(e < 0 ? 'DEP FIR' : 'FIR', esc(cf.fir) + ' ' + esc(cf.name) + (nf ? ' <small>→ ' + esc(nf.fir) + ' ' + inTxt(nf.eet_min - e) + '</small>' : ''), 'fir');
+    var se = sunAt(e), night = se != null ? se < -0.833 : null;
+    var cm = cf && D.comms_fir ? D.comms_fir[cf.fir] : null;
+    if (cm && e <= T) {
+      var hf = cm.hf || {}, set = hf.any || (night === false ? hf.day : hf.night) || hf.day || hf.night;
+      h += chip('COMMS', esc(cm.vhf) + (set ? ' · HF ' + (hf.any ? '' : (night === false ? 'day ' : 'night ')) + esc(set.join(' / ')) : '') + (cm.sel ? ' <small>SELCAL avail.</small>' : ''), 'com', true);
+    }
+    var cp = cf && D.geo && D.geo.cpdlc ? segOf(D.geo.cpdlc.segs, cf.fir) : null;
+    if (cp && e <= T) h += chip('CPDLC', cp.addr ? esc(cp.addr) + (cp.st === 'trial' ? ' <small>trial</small>' : '') : 'none', cp.addr ? 'vio' : 'mut', true);
+    var sl = cf && D.geo && D.geo.slop ? segOf(D.geo.slop.segs, cf.fir) : null;
+    if (sl && air) h += chip('SLOP', sl.st === 'authorized' ? '✓ right, max 2 NM' : (sl.st === 'not_authorized' ? '✗ centreline' : 'not published – centreline'), sl.st === 'authorized' ? 'grn' : (sl.st === 'not_authorized' ? 'red' : 'mut'), true);
+    var g = inIfbp(eC), nx = null; IFS.forEach(function (q) { if (!nx && q.w > eC) nx = q; });
+    if (e < 0 && g) h += chip('IFBP 126.9', 'from T/O – broadcast after departing', 'cy');
+    else if (g && air) h += chip('IFBP 126.9', eC < g.a ? 'listen – area in ' + Math.ceil(g.a - eC) + ' min' : 'active – broadcast ≤ 20 min', 'cy');
+    else if (nx && air) h += chip('IFBP', 'listen from ' + hm(nx.w) + ' <small>' + inTxt(nx.w - e) + '</small>', 'mut');
+    var xc = globe && globe.xcheck ? globe.xcheck() : null;
+    if (xc) h += chip('GPS', esc(xc), 'com', true);
+    if (night != null) {
+      var chg = null; for (var t = Math.max(e, 0) + 5; t <= T; t += 5) { var s2 = sunAt(t); if ((s2 < -0.833) !== night) { chg = t; break; } }
+      h += chip(night ? 'NIGHT' : 'DAY', chg != null ? (night ? 'sunrise' : 'sunset') + ' ~' + zt(toMin() + chg) + ' <small>' + hm(chg) + '</small>' : (e > T ? 'at ' + esc(F.arr) : 'until landing'), night ? 'nt' : 'dy', true);
+    }
+    if (box._h !== h) { box._h = h; box.innerHTML = h; }
+  }
   function renderNow(e) {
     $('planbanner').hidden = !isPlan();
     var it = items(e), na = it[0];
@@ -297,7 +362,8 @@ window.FPLive = function (D) {
     if (box._sig !== sig) {
       box._sig = sig;
       box.innerHTML = na ? '<div class="in" data-t="' + na.t + '"></div><div class="what"><span class="tag k-' + na.kind + '">' + (KIND[na.kind] || na.kind.toUpperCase()) + '</span> ' + esc(na.what) + '</div>' +
-        '<div class="meta"><span data-meta="1"></span>' + (na.kind === 'call' ? ' <button type="button" data-done="' + esc(na.id) + '">Done</button>' : '') + (na.kind === 'fc' ? ' <button type="button" data-act="fc">Done · restart 55:00</button>' : '') + '</div>'
+        '<div class="meta"><span data-meta="1"></span>' + (na.kind === 'call' ? ' <button type="button" data-done="' + esc(na.id) + '">Done</button>' : '') + (na.kind === 'fc' ? ' <button type="button" data-act="fc">Done · restart 55:00</button>' : '') +
+        (na.kind === 'ib' ? ' <button type="button" data-act="ib">Broadcast done · restart 20:00</button>' : '') + '</div>'
         : '<div class="what">All planned items passed.</div>';
     }
     if (na) {
@@ -305,6 +371,7 @@ window.FPLive = function (D) {
       inn.textContent = cdTxt(d0); inn.className = 'in ' + stCls(na, e);
       box.querySelector('[data-meta]').textContent = 'Next action · EET ' + hm(na.t) + ' · ' + zt(toMin() + na.t) + (na.kind === 'call' ? ' · call / log-on deadline' : '');
     }
+    renderStrip(e);
     var ul = $('upnext');
     if (ul) {
       var rest = it.slice(1, 9), us = rest.map(function (x) { return x.k + stCls(x, e); }).join('|');
@@ -318,29 +385,43 @@ window.FPLive = function (D) {
       }
       ul.querySelectorAll('.unin').forEach(function (s) { s.textContent = inTxt(+s.dataset.t - e); });
     }
-    // cards
-    var c = '', nr = nextRowByTime(e);
+    // cards (minute resolution so a card's button is not rebuilt while it is tapped)
+    var C = [], nr = nextRowByTime(e), eC = Math.max(0, Math.min(T, e)), inf = globe ? globe.info(eC) : null;
     var left = fcLeft();
-    c += card('Fuel check timer', left === null ? 'not started' : (left > 0 ? mmss(left) : 'DUE +' + mmss(-left)), left === null ? '' : (left <= 0 ? 'red' : (left <= 300 ? 'amb' : 'grn')),
-      left === null ? 'tap FUEL CHECK at the top after a fuel check' : 'last check ' + isoZ(S.fc));
-    if (nr) c += card('Next waypoint (by time)', esc(nr.wpt) + ' ' + hm(nr.eet), 'mag', inTxt(nr.eet - e) + (S.passed + 1 < D.rows.length && D.rows[S.passed + 1].wpt !== nr.wpt ? ' · ticked next: ' + esc(D.rows[S.passed + 1].wpt) : ''));
-    var nf = null; D.firs.forEach(function (f) { if (!nf && f.eet_min > e) nf = f; });
-    var cf = curFir(e);
-    c += card('FIR', cf ? esc(cf.fir) + ' ' + esc(cf.name) : 'Before ' + esc(D.firs[0].fir), '', nf ? 'next ' + esc(nf.fir) + ' ' + esc(nf.name) + ' at ' + hm(nf.eet_min) + ' · ' + inTxt(nf.eet_min - e) : 'last FIR');
-    var eta = toMin() + T;
-    var lt = (((eta + F.arr_off * 60) % 1440) + 1440) % 1440;
-    c += card('ETA ' + esc(F.arr), zt(eta), '', pad(Math.floor(lt / 60)) + pad(lt % 60) + ' LT · ' + (e >= 0 ? hm(Math.max(0, T - e)) + ' to go' : 'trip ' + hm(T)) + (isPlan() ? ' · planned' : ''));
-    var near = D.chain.filter(function (a) { return a.a <= e && e <= a.b && a.cls !== 'CA'; }).map(function (a) { return a.icao + ' ' + a.cls; });
-    c += card('Within 1 h (420 NM) now', near.length ? esc(near.slice(0, 4).join(' · ')) : 'none', near.length ? 'grn' : 'red', near.length ? 'OM-C class; CA airports not listed' : 'no D / A1 airport within 420 NM');
-    var mx = 0, mw = ''; D.mora.forEach(function (p) { if (p.eet_min >= e && p.eet_min <= e + 30 && p.mora > mx) { mx = p.mora; mw = p.name; } });
-    c += card('MORA next 30 min', mx ? mx + ' ft' : '-', mx > 10000 ? 'red' : (mx > 5000 ? 'amb' : ''), mx ? 'highest at ' + esc(mw) : '');
+    C.push(card('fc', 'Fuel check timer', left === null ? 'not started' : (left > 0 ? Math.ceil(left / 60) + ' min' : 'DUE +' + Math.ceil(-left / 60) + ' min'),
+      left === null ? '' : (left <= 0 ? 'red' : (left <= 300 ? 'amb' : 'grn')), left === null ? 'tap FUEL CHECK at the top after a fuel check' : 'last check ' + isoZ(S.fc)));
+    var g = inIfbp(e);
+    if (g && e >= g.a - 10) {
+      var il = ibLeft();
+      C.push(card('ib', 'IFBP 126.9 broadcast', il === null ? 'none logged' : (il > 0 ? Math.ceil(il / 60) + ' min' : 'DUE'), il === null || il <= 0 ? (e >= g.a ? 'amb' : '') : (il <= 120 ? 'amb' : 'grn'),
+        'on entry · after departure in the area · before level changes · at least every 20 min' + (il !== null ? ' · last ' + isoZ(S.ib) : ''),
+        '<button type="button" class="cbtn" data-act="ib">Broadcast done · restart 20:00</button>'));
+    }
+    if (inf) {
+      var near = D.chain.filter(function (a) { return a.a <= e && e <= a.b && a.cls !== 'CA'; }).map(function (a) { return a.icao + ' ' + a.cls; });
+      var ab = function (o, dir) { return '<span class="apl"><small>' + (dir < 0 ? '◀ RETURN' : 'AHEAD ▶') + '</small> ' + (o ? '<span class="' + (o.d <= 420 ? 'in1' : 'out1') + '">' + esc(o.icao) + ' ' + esc(o.cls) + ' · ' + o.d + ' NM</span>' : '–') + '</span>'; };
+      C.push(card('apt', '1-hour airports (420 NM)', ab(inf.back, -1) + ab(inf.ahead, 1), inf.back && inf.back.d <= 420 || inf.ahead && inf.ahead.d <= 420 ? '' : 'red',
+        'return / ahead along the route · within 420 NM now (OM-C chain): ' + (near.length ? esc(near.slice(0, 5).join(' · ')) : '<b class="r">none</b>')));
+    }
     var lp = null, np = null; D.route.forEach(function (p) { if (p.e <= e) lp = p; else if (!np) np = p; });
-    c += card('Navlog (planned)', np ? esc(np.n) + ' ' + hm(np.e) : '-', '', (lp ? 'last ' + esc(lp.n) + ' ' + hm(lp.e) : 'before take-off') + (np ? ' · ' + inTxt(np.e - e) : ''));
-    $('nowcards').innerHTML = c;
+    if (nr) C.push(card('nw', 'Next waypoint', esc(nr.wpt) + ' ' + hm(nr.eet), 'mag', inTxt(nr.eet - e) + (S.passed >= 1 && S.passed + 1 < D.rows.length && D.rows[S.passed + 1].eet != null && D.rows[S.passed + 1].wpt !== nr.wpt ? ' · ticked next: ' + esc(D.rows[S.passed + 1].wpt) : '') +
+      (np ? ' · navlog next ' + esc(np.n) + ' ' + hm(np.e) + ' (' + inTxt(np.e - e) + ')' : '')));
+    var eta = toMin() + T, lt = (((eta + F.arr_off * 60) % 1440) + 1440) % 1440;
+    C.push(card('eta', 'ETA ' + esc(F.arr), zt(eta), '', pad(Math.floor(lt / 60)) + pad(lt % 60) + ' LT · ' + (e >= 0 ? hm(Math.max(0, T - e)) + ' to go' : 'trip ' + hm(T)) + (isPlan() ? ' · planned' : '') +
+      (inf ? ' · ' + inf.togo.toLocaleString('en-GB') + ' NM' + (inf.tod != null && inf.tod > e ? ' · TOD ~' + hm(inf.tod) + ' (' + zt(toMin() + inf.tod) + ')' : '') : '')));
+    var mx = 0, mw = ''; D.mora.forEach(function (p) { if (p.eet_min >= e && p.eet_min <= e + 30 && p.mora > mx) { mx = p.mora; mw = p.name; } });
+    C.push(card('mora', 'MORA next 30 min', mx ? mx + ' ft' : '-', mx > 10000 ? 'red' : (mx > 5000 ? 'amb' : ''), mx ? 'highest at ' + esc(mw) : ''));
+    putCards(C);
   }
 
+  /* ---------- IFBP 20-min broadcast timer (suggestion 05 NOV 26) */
+  var IFS = D.geo && D.geo.ifbp ? D.geo.ifbp.segs : [];
+  function inIfbp(e) { for (var j = 0; j < IFS.length; j++) if (e >= IFS[j].w && e <= IFS[j].b) return IFS[j]; return null; }
+  function ibLeft() { if (!S.ib) return null; return 20 * 60 - (Date.now() - new Date(S.ib).getTime()) / 1000; }
+  function ibReset() { var prev = S.ib; S.ib = new Date().toISOString(); save(); tick(true); toast('IFBP broadcast at ' + isoZ(S.ib) + ' – next within 20 min.', function () { S.ib = prev; save(); tick(true); }); }
+
   /* ---------- clock tick */
-  var lastPaint = 0;
+  var lastPaint = 0, CUR = 'now';
   function tick(force) {
     var e = el(), now = new Date();
     $('utc').textContent = pad(now.getUTCHours()) + ':' + pad(now.getUTCMinutes()) + ':' + pad(now.getUTCSeconds());
@@ -353,9 +434,10 @@ window.FPLive = function (D) {
     var cn = $('chain-now');
     if (cn) { var vb = cn.ownerSVGElement.viewBox.baseVal, cx = 70 + (1000 - 80) * Math.max(0, Math.min(T, e)) / T; cn.setAttribute('x1', cx); cn.setAttribute('x2', cx); cn.setAttribute('y1', 26); cn.setAttribute('y2', vb.height - 18); cn.style.display = (e >= 0 && e <= T) ? '' : 'none'; }
     document.querySelectorAll('#timeline circle.dl').forEach(function (cc) { cc.classList.toggle('done', !!S.done[cc.dataset.id]); });
-    paintFC(); paintAlerts(e); renderNow(e); paintCalls(e);
-    if (force || Date.now() - lastPaint > 5000) { paintWpt(); lastPaint = Date.now(); }
-    if (globe) globe.tick(e);
+    paintFC(); paintAlerts(e);
+    if (CUR === 'now') renderNow(e);   // only the page on screen is painted (less work every second)
+    if (CUR === 'waypoints') { paintCalls(e); if (force || Date.now() - lastPaint > 5000) { paintWpt(); lastPaint = Date.now(); } }
+    if (globe && CUR === 'route-map') globe.tick(e);
   }
 
   /* ---------- full-screen picture viewer (pinch / drag / double-tap / + - Fit) */
@@ -460,7 +542,7 @@ window.FPLive = function (D) {
     var t = $('top'), r = document.documentElement.style;
     if (t) r.setProperty('--hdr', t.offsetHeight + 'px');
   }
-  window.addEventListener('resize', function () { layoutVars(); applyCols(); });
+  window.addEventListener('resize', layoutVars);
 
   /* ---------- views (hash routing): NOW button + the pack sequence strip + prev / next pager */
   var views = {}; document.querySelectorAll('.view').forEach(function (v) { views[v.dataset.view] = v; });
@@ -476,7 +558,7 @@ window.FPLive = function (D) {
   function show() {
     var h = (location.hash || '').replace('#', '');
     if (!views[h]) h = 'now';
-    Object.keys(views).forEach(function (k) { views[k].hidden = (k !== h); });
+    Object.keys(views).forEach(function (k) { views[k].hidden = (k !== h); }); CUR = h;
     navA.forEach(function (a) { var o = a.dataset.v === h; a.classList.toggle('on', o); if (o) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
     var cur = strip && strip.querySelector('a.on');
     if (cur) { var sr = strip.getBoundingClientRect(), cr = cur.getBoundingClientRect(); if (cr.left < sr.left || cr.right > sr.right) strip.scrollLeft += (cr.left + cr.width / 2) - (sr.left + sr.width / 2); }
@@ -498,6 +580,6 @@ window.FPLive = function (D) {
   }
   viewer();
 
-  applyTheme(); applyFs(); applySound(); applyCols(); show(); if (P.wake) wake();
+  applyTheme(); applyFs(); applySound(); show(); if (P.wake) wake();
   setInterval(tick, 1000);
 };

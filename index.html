@@ -38,16 +38,16 @@
   <div class="sg"><small>Text size</small><button type="button" id="fs-dn" aria-label="Smaller text">A−</button><b id="fs-v">100%</b><button type="button" id="fs-up" aria-label="Larger text">A+</button></div>
   <div class="sg"><small>Alerts</small><button type="button" id="sound">Sound alerts: off</button><button type="button" id="sound-test">Test sound</button></div>
   <div class="sg"><small>Display</small><button type="button" id="theme">Theme: auto</button><button type="button" id="wake">Keep screen on: off</button></div>
-  <div class="sg"><small>Waypoints</small><button type="button" id="cols">Waypoint columns: compact</button></div>
  </div>
  <nav class="tabs" id="tabs" aria-label="Briefing package"></nav>
 </header>
 <main id="main">
 <section id="v-now" class="view" data-view="now" hidden>
  <div id="planbanner" class="banner" hidden></div>
+ <div id="nextaction" class="nextaction"></div>
+ <div id="nowstrip" class="nowstrip" aria-label="Status now"></div>
  <div class="nowgrid">
-  <div class="nowl"><div id="nextaction" class="nextaction"></div>
-   <div class="bar"><span>Up next</span><small>calls · waypoints · FIRs · events · fuel check</small></div>
+  <div class="nowl"><div class="bar"><span>Up next</span><small>calls · waypoints · FIRs · events · timers</small></div>
    <ol id="upnext" class="upnext"></ol></div>
   <div id="nowcards" class="nowcards"></div>
  </div>
@@ -57,11 +57,10 @@
 <section id="v-waypoints" class="view" data-view="waypoints" hidden>
  <div id="wpt-static"></div>
  <div class="wptbar"><span><b>Tap a row when you pass it.</b> The next one is framed in magenta; tap a ticked row to step back to it.</span>
-  <button type="button" id="wpt-next">Go to next</button><button type="button" id="wcols">Columns: compact</button><button type="button" id="undo">Undo last</button><button type="button" id="reset">Reset</button></div>
- <table class="wpt" id="wpt"><thead><tr><th>EET</th><th>Waypoint</th><th>FIR</th><th>Call / frequency</th><th class="c-cpdlc">CPDLC</th><th>Special requirements</th><th>Threat</th><th class="c-div">Divert</th><th>MORA</th><th>Fuel t<br>min / plan</th></tr></thead><tbody></tbody></table>
- <p class="note">MORA: amber above 5000 ft, red above 10000 ft. Fuel plan = OFP minimum remaining + EXTRA + CONT. ▶ = FIR boundary (FPL EET). DUE = the planned time has passed but the row is not ticked. Compact columns hide CPDLC and Divert (Settings or the Columns button).</p>
+  <button type="button" id="wpt-next">Go to next</button><button type="button" id="undo">Undo last</button><button type="button" id="reset">Reset</button></div>
+ <table class="wpt" id="wpt"><thead><tr><th>EET</th><th>Waypoint</th><th>FIR</th><th>Comms – VHF in order · HF · CPDLC · calls</th><th>Special requirements</th><th>Threat</th><th>MORA</th><th>Fuel t<br>min / plan</th></tr></thead><tbody></tbody></table>
+ <p class="note">Comms: VHF numbered in the order you will use them; HF with the day (HJ) or night (HN) set that applies at the planned time first (highlighted); CPDLC logon address and time; call / log-on deadlines with Done. SELCAL check: not mandatory in these FIRs (Lido RSI / CRAR) – where it is mandatory the row says so. MORA: amber above 5000 ft, red above 10000 ft. Fuel plan = OFP minimum remaining + EXTRA + CONT. ▶ = FIR boundary (FPL EET). DUE = the planned time has passed but the row is not ticked. Diversion airports: MAP (return / ahead).</p>
 </section>
-<section id="v-calls" class="view" data-view="calls" hidden></section>
 <div id="static-views"></div>
 <!--APP-ONLY-START-->
 <section id="v-flights" class="view" data-view="flights" hidden>

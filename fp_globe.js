@@ -12,15 +12,40 @@ window.FPGlobe = function (host, D, L) {
   /* ---------- basemap: TopoJSON (quantized, delta-encoded arcs) -> land + internal borders */
   var W0 = G.world, sc = W0.transform.scale, tr = W0.transform.translate;
   var ARCS = W0.arcs.map(function (a) { var x = 0, y = 0; return a.map(function (p) { x += p[0]; y += p[1]; return [x * sc[0] + tr[0], y * sc[1] + tr[1]]; }); });
-  function arc(i) { return i < 0 ? ARCS[~i].slice().reverse() : ARCS[i]; }
-  function ring(ids) { var r = []; for (var k = 0; k < ids.length; k++) { var a = arc(ids[k]); r = r.concat(k ? a.slice(1) : a); } return r; }
-  function geom(g) { return g.type === 'Polygon' ? { type: 'Polygon', coordinates: g.arcs.map(ring) } : { type: 'MultiPolygon', coordinates: g.arcs.map(function (p) { return p.map(ring); }) }; }
-  var LAND = geom(W0.land), cnt = {};
+  /* level of detail (05 NOV 26 perf): Douglas-Peucker copies of the arcs; the overview draws ~10x fewer points, the full 1:50m set only when zoomed in */
+  function dp(pts, tol) {
+    if (pts.length <= 2) return pts;
+    var keep = new Uint8Array(pts.length), st = [[0, pts.length - 1]], t2 = tol * tol; keep[0] = keep[pts.length - 1] = 1;
+    while (st.length) {
+      var se = st.pop(), a = se[0], b = se[1], ax = pts[a][0], ay = pts[a][1], dx = pts[b][0] - ax, dy = pts[b][1] - ay, L2 = dx * dx + dy * dy, md = -1, mi = -1;
+      for (var i = a + 1; i < b; i++) {
+        var qx = pts[i][0] - ax, qy = pts[i][1] - ay, d;
+        if (L2 === 0) d = qx * qx + qy * qy; else { var t = (qx * dx + qy * dy) / L2; t = t < 0 ? 0 : (t > 1 ? 1 : t); qx -= t * dx; qy -= t * dy; d = qx * qx + qy * qy; }
+        if (d > md) { md = d; mi = i; }
+      }
+      if (md > t2) { keep[mi] = 1; st.push([a, mi], [mi, b]); }
+    }
+    var out = []; for (var j = 0; j < pts.length; j++) if (keep[j]) out.push(pts[j]); return out;
+  }
+  function buildBase(AR, minRing) {
+    function arc(i) { return i < 0 ? AR[~i].slice().reverse() : AR[i]; }
+    function ring(ids) { var r = []; for (var k = 0; k < ids.length; k++) { var a = arc(ids[k]); r = r.concat(k ? a.slice(1) : a); } return r; }
+    function poly(p) { return p.map(ring).filter(function (r, i) { return i > 0 || r.length >= minRing; }); }
+    var g = W0.land, polys = (g.type === 'Polygon' ? [g.arcs] : g.arcs).map(poly).filter(function (p) { return p.length && p[0].length >= minRing; });
+    return { land: { type: 'MultiPolygon', coordinates: polys }, bord: { type: 'MultiLineString', coordinates: BIDX.map(function (j) { return AR[j]; }) } };
+  }
+  var cnt = {};
   W0.countries.forEach(function (g) {
     var seen = {};
     (g.type === 'Polygon' ? [g.arcs] : g.arcs).forEach(function (p) { p.forEach(function (rr) { rr.forEach(function (i) { var j = i < 0 ? ~i : i; if (!seen[j]) { seen[j] = 1; cnt[j] = (cnt[j] || 0) + 1; } }); }); });
   });
-  var BORD = { type: 'MultiLineString', coordinates: Object.keys(cnt).filter(function (j) { return cnt[j] > 1; }).map(function (j) { return ARCS[j]; }) };
+  var BIDX = Object.keys(cnt).filter(function (j) { return cnt[j] > 1; });
+  var LOD = [buildBase(ARCS, 4)], LODT = [0, 0.03, 0.12];   // tolerance in degrees: full, mid, overview
+  function base(pxPerDeg) {
+    var lv = pxPerDeg < 16 ? 2 : (pxPerDeg < 60 ? 1 : 0);
+    if (!LOD[lv]) LOD[lv] = buildBase(ARCS.map(function (a) { return dp(a, LODT[lv]); }), 4);
+    return LOD[lv];
+  }
   var SPHERE = { type: 'Sphere' }, GRAT = d3.geoGraticule10();
   G.fir.forEach(function (f) { f.geo = { type: 'MultiLineString', coordinates: f.lines }; });
   /* IFBP area: FIR polygons where the map data has them (winding fixed for d3) + the IFBP part of the route */
@@ -47,9 +72,11 @@ window.FPGlobe = function (host, D, L) {
   function rowOf(n) { for (var j = 0; j < D.rows.length; j++) if (D.rows[j].wpt === n) return D.rows[j]; return null; }
 
   /* ---------- DOM */
-  var LAY = { ifbp: 'IFBP area', rings: 'Rings 420 NM', fir: 'FIR lines', apt: 'Airports', wpt: 'Waypoint names', acts: 'Action points', cty: 'Borders' };
-  if (!IF) delete LAY.ifbp;
-  var lay = { ifbp: false, rings: true, fir: true, apt: true, wpt: true, acts: true, cty: true };
+  var SL = G.slop || null, CP = G.cpdlc || null, PR = G.profile || null;
+  var LAY = { slop: 'SLOP', cpdlc: 'CPDLC', ifbp: 'IFBP area', rings: 'Rings 420 NM', fir: 'FIR lines', apt: 'Airports', wpt: 'Waypoint names', acts: 'Action points', cty: 'Borders' };
+  if (!IF) delete LAY.ifbp; if (!SL) delete LAY.slop; if (!CP) delete LAY.cpdlc;
+  var EXCL = ['slop', 'cpdlc', 'ifbp'];   // route overlays: one at a time so the colours stay readable
+  var lay = { slop: false, cpdlc: false, ifbp: false, rings: true, fir: true, apt: true, wpt: true, acts: true, cty: true };
   try { var ls = localStorage.getItem('fpapp:glay'); if (ls) lay = Object.assign(lay, JSON.parse(ls)); } catch (e) { }
   host.innerHTML =
     '<div class="gwrap"><canvas class="gcv" role="img" aria-label="Interactive route map. Drag to turn the Earth, pinch or double-tap to zoom, tap a symbol for details."></canvas>' +
@@ -57,24 +84,27 @@ window.FPGlobe = function (host, D, L) {
     '<div class="gctl"><button type="button" data-g="in" aria-label="Zoom in">+</button><button type="button" data-g="out" aria-label="Zoom out">−</button>' +
     '<button type="button" data-g="route">Route</button><button type="button" data-g="follow">✈ Follow</button><button type="button" data-g="gps" aria-label="Use the iPad GPS position">◎ GPS</button><button type="button" data-g="full" aria-label="Full screen">⤢</button></div>' +
     '<div class="gpop" hidden><button type="button" class="gpx" aria-label="Close details">✕</button><div class="gpb"></div></div></div>' +
+    (PR ? '<div class="gprof"><div class="gapt gback" aria-live="polite"></div><svg class="gpsvg" viewBox="0 0 1000 190" role="img" aria-label="Side view: MORA along the route, planned levels and the aircraft. Tap to preview a time."></svg><div class="gapt gahead" aria-live="polite"></div></div>' : '') +
     '<div class="gbar"><button type="button" data-g="live" class="glive">LIVE</button><button type="button" data-g="play" class="gplay" aria-label="Play the flight">▶</button>' +
     '<input type="range" class="gsl" min="0" max="' + T + '" step="1" value="0" aria-label="Time after take-off (preview)"><div class="gtime"><b></b><small></small><small class="ggps" hidden></small></div></div>' +
     '<div class="glay">' + Object.keys(LAY).map(function (k) { return '<button type="button" class="chipbtn" data-lay="' + k + '" aria-pressed="' + lay[k] + '">' + LAY[k] + '</button>'; }).join('') + '</div>';
   var wrap = host.querySelector('.gwrap'), cv = host.querySelector('canvas'), ctx = cv.getContext('2d');
   var sl = host.querySelector('.gsl'), tb = host.querySelector('.gtime b'), ts = host.querySelector('.gtime small'), pop = host.querySelector('.gpop'), gg = host.querySelector('.ggps'), badge = host.querySelector('.gbadge');
-  var proj = d3.geoOrthographic().clipAngle(90).precision(0.5), path = d3.geoPath(proj, ctx);
+  var proj = d3.geoOrthographic().clipAngle(90).precision(1), pathD = d3.geoPath(proj, ctx), path = pathD;
+  var SCV = document.createElement('canvas'), sctx = SCV.getContext('2d'), pathS = d3.geoPath(proj, sctx), gx = ctx, SKEY = '', SHITS = [], SWP = [], themeVer = 0;
+  try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () { C = null; themeVer++; req(); }); } catch (e) { }
   var W = 0, H = 0, DPR = 1, r0 = 100, k = 1, rot = [0, 0, 0], inited = false, raf = 0;
   var mode = 'live', pv = 0, playing = 0, follow = false, HITS = [];
   var PLANE = typeof Path2D !== 'undefined' ? new Path2D('M0,-15C1.7,-15 2.2,-12 2.2,-9.5L2.2,-3.5L14,3L14,6L2.2,2.6L2.2,9L5.5,12L5.5,14.2L0,12.8L-5.5,14.2L-5.5,12L-2.2,9L-2.2,2.6L-14,6L-14,3L-2.2,-3.5L-2.2,-9.5C-2.2,-12 -1.7,-15 0,-15Z') : null;
 
   var C = null, Ct = 0;
   function colors() {
-    if (C && Date.now() - Ct < 3000) return C;
+    if (C) return C;
     var cs = getComputedStyle(document.documentElement), v = function (n, d) { return (cs.getPropertyValue(n) || '').trim() || d; };
     C = { bg: v('--panel', '#181c24'), ocean: v('--map-ocean', '#10202f'), land: v('--map-land', '#2c3139'), coast: v('--map-coast', '#46505c'), border: v('--map-border', '#5d6672'),
       grat: v('--map-grat', 'rgba(255,255,255,.07)'), fir: v('--map-fir', '#e5534b'), route: v('--map-route', '#f1f5fa'), text: v('--fg', '#e9eef5'), muted: v('--muted', '#9aa5b4'),
       halo: v('--map-halo', 'rgba(8,14,22,.9)'), mag: v('--mag', '#e46bd8'), grn: v('--grn', '#5ccb72'), amb: v('--amb', '#f2b33d'), etops: v('--map-etops', '#e8832a'),
-      apt: v('--map-apt', '#8c96a3'), font: v('--body', 'system-ui, sans-serif') };
+      apt: v('--map-apt', '#8c96a3'), cyan: v('--cyan', '#6cc6e6'), font: v('--body', 'system-ui, sans-serif') };
     Ct = Date.now(); return C;
   }
   function visible() { return !!(host.offsetParent || host.classList.contains('gfull')); }
@@ -129,8 +159,9 @@ window.FPGlobe = function (host, D, L) {
       tb.textContent = (mode === 'live' ? '' : 'PREVIEW ') + '+' + hm(e) + ' · ' + zt(toM + e);
       ts.textContent = a.n + ' ' + hm(a.e) + ' → ' + b.n + ' ' + hm(b.e) + ' · ' + Math.round(CUM[CUM.length - 1] - distAt(eC)).toLocaleString('en-GB') + ' NM to go' + (inIfbp(eC) ? ' · IFBP 126.9' : '') + (plan && mode === 'live' ? ' · no T/O set (planned)' : '');
     }
-    gg.hidden = !GPS.on; if (GPS.on) { var gf = gpsFix(); gg.textContent = gf ? 'GPS ' + gpsLine(gf) : 'GPS: ' + (GPS.msg || 'no recent fix'); }
-    badge.textContent = GPS.on ? '✈ magenta = planned (OFP EET + T/O) · cyan = iPad GPS' : '✈ = planned position (OFP EET + your T/O) · not GPS';
+    gg.hidden = !GPS.on; if (GPS.on) { var gf = gpsFix(); gg.textContent = gf ? 'GPS ' + gpsLine(gf) + ' · ' + xcheck(gf) : 'GPS: ' + (GPS.msg || 'no recent fix') + ' – elapsed time stays the reference'; }
+    badge.textContent = GPS.on ? '✈ magenta = elapsed-time position · cyan = iPad GPS (cross-check)' : '✈ = elapsed-time position (OFP EET + your T/O) · not GPS';
+    updProfile();
   }
   sl.addEventListener('input', function () { stopPlay(); pv = +sl.value; setMode('preview'); if (follow) centerPlane(false); });
   function centerPlane(animate) { var gf = mode === 'live' ? gpsFix() : null, p = gf ? [gf.lon, gf.lat] : posAt(Math.max(0, Math.min(T, curE()))); if (animate) fly(p, Math.max(k, 3), 500); else { rot = [-p[0], clampLat(-p[1]), 0]; req(); } }
@@ -140,7 +171,11 @@ window.FPGlobe = function (host, D, L) {
     var b = ev.target.closest('button'); if (!b || !host.contains(b)) return;
     var g = b.dataset.g;
     if (b.dataset.lay) {
-      var key = b.dataset.lay; lay[key] = !lay[key]; b.setAttribute('aria-pressed', String(lay[key])); try { localStorage.setItem('fpapp:glay', JSON.stringify(lay)); } catch (e) { }
+      var key = b.dataset.lay; lay[key] = !lay[key]; b.setAttribute('aria-pressed', String(lay[key]));
+      if (lay[key] && EXCL.indexOf(key) >= 0) EXCL.forEach(function (o) { if (o !== key && lay[o]) { lay[o] = false; var ob = host.querySelector('[data-lay="' + o + '"]'); if (ob) ob.setAttribute('aria-pressed', 'false'); } });
+      try { localStorage.setItem('fpapp:glay', JSON.stringify(lay)); } catch (e) { }
+      if (key === 'slop') showPop(lay.slop ? '<b class="gph">SLOP along the route</b><div><span class="sw g"></span> authorized · <span class="sw r"></span> not authorized · <span class="sw n"></span> not published (centreline). Tap a coloured part of the route for the details; tap it again to close.</div>' : null, false, 'hint');
+      if (key === 'cpdlc') showPop(lay.cpdlc ? '<b class="gph">CPDLC along the route</b><div>Violet = CPDLC (dashed = trial). Logon address and time on the route; tap a part of the route for the details, tap again to close.</div>' : null, false, 'hint');
       if (key === 'ifbp') showPop(lay.ifbp ? '<b class="gph">IFBP area on</b><div>Cyan = IFBP 126.9 (area and the IFBP part of the route; lighter = 10-min listening watch before entry). Tap it for the procedure.</div><button type="button" data-g="ifbp">Show the IFBP procedure</button>' : null);
       req(); return;
     }
@@ -155,6 +190,8 @@ window.FPGlobe = function (host, D, L) {
     }
     else if (g === 'ifbp') showPop(ifbpHtml(), true, 'ifbp');
     else if (g === 'gps') gpsSet(!GPS.on);
+    else if (g === 'src-el') setDsrc('el');
+    else if (g === 'src-gps') setDsrc('gps');
     else if (g === 'flplan') { setFL(''); refreshPop(true); }
     else if (g === 'live') setMode('live');
     else if (g === 'play') {
@@ -205,13 +242,16 @@ window.FPGlobe = function (host, D, L) {
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && host.classList.contains('gfull')) host.querySelector('[data-g="full"]').click(); });
 
   /* ---------- details popup */
-  function showPop(h, wide, kind) { if (!h) { pop.hidden = true; pop.dataset.kind = ''; req(); return; } pop.querySelector('.gpb').innerHTML = h; pop.classList.toggle('wide', !!wide); pop.dataset.kind = kind || ''; pop.hidden = false; pop.scrollTop = 0; req(); }
+  function showPop(h, wide, kind, key) { if (!h) { pop.hidden = true; pop.dataset.kind = ''; pop.dataset.key = ''; req(); return; } pop.querySelector('.gpb').innerHTML = h; pop.classList.toggle('wide', !!wide); pop.dataset.kind = kind || ''; pop.dataset.key = key || ''; pop.hidden = false; pop.scrollTop = 0; req(); }
   function hit(p) {
-    var best = null, bd = 26;
+    var best = null, bd = 26, band = null, bb = 16;
     HITS.forEach(function (h) { if (h.lo) return; var d = Math.hypot(h.x - p[0], h.y - p[1]) - (h.r || 0); if (d < bd) { bd = d; best = h; } });
-    if (!best) { bd = 16; HITS.forEach(function (h) { if (!h.lo) return; var d = Math.hypot(h.x - p[0], h.y - p[1]); if (d < bd) { bd = d; best = h; } }); }
+    HITS.forEach(function (h) { if (!h.lo) return; var d = Math.hypot(h.x - p[0], h.y - p[1]); if (d < bb) { bb = d; band = h; } });
+    // with a route overlay on (SLOP / CPDLC / IFBP) the coloured route wins unless the tap is right on a symbol
+    if (band && (!best || bd > 4)) best = band;
     if (!best && IF && lay.ifbp) { var g = proj.invert(p); if (g && vis(g) && IF.polys.some(function (q) { return d3.geoContains(q.f, g); })) best = { html: ifbpHtml }; }
-    showPop(best ? best.html() : null, best && best.html === ifbpHtml, best && best.html === ifbpHtml ? 'ifbp' : (best && best.html === gpsHtml ? 'gps' : ''));
+    if (best && best.key && !pop.hidden && pop.dataset.key === best.key) { showPop(null); return; }   // tap the same part again = close
+    showPop(best ? best.html() : null, best && best.html === ifbpHtml, best && best.html === ifbpHtml ? 'ifbp' : (best && best.html === gpsHtml ? 'gps' : ''), best && best.key);
   }
   function tz(e) { return hm(e) + ' · ' + zt(L.toMin() + e); }
   function wptHtml(w) {
@@ -280,7 +320,7 @@ window.FPGlobe = function (host, D, L) {
   function setFL(v) { FLX = String(v || '').replace(/\D/g, '').slice(0, 3); try { localStorage.setItem(FLK, FLX); } catch (e) { } }
   function rpt(eC) {
     var R = null, now = Date.now(), toM = L.toMin();
-    var f = mode === 'live' ? gpsFix() : null;
+    var f = mode === 'live' && DSRC === 'gps' ? gpsFix() : null;
     if (f) {
       var ll = [f.lon, f.lat], s = snap(ll), a = RT[s.k], b = RT[s.k + 1], gs = gsOf(f, s), tF = mod(f.t);
       var dA = d3.geoDistance(RC[s.k], ll) * NM, nI = s.k + 1, pos;
@@ -307,8 +347,8 @@ window.FPGlobe = function (host, D, L) {
     if (!R) {
       var sg = seg(eC), p0 = RT[sg.k], p1 = RT[Math.min(RT.length - 1, sg.k + 1)], p2 = RT[Math.min(RT.length - 1, sg.k + 2)];
       R = { src: 'plan', e: eC, pos: p0.n, t: toM + p0.e, next: p1.n, nextT: toM + p1.e, foll: p2.n, trk: brg(RC[sg.k], RC[Math.min(RC.length - 1, sg.k + 1)]), awy: legAwy(sg.k),
-            info: (mode === 'live' ? 'No GPS fix and no waypoint ticked yet. ' : 'Preview. ') +
-              'Planned values: OFP EETs from ' + (L.isPlan() ? 'the planned T/O (no T/O set)' : 'your T/O') + '.' };
+            info: (mode === 'live' ? (DSRC === 'gps' ? 'No GPS fix – using the elapsed time. ' : '') + 'No waypoint ticked yet. ' : 'Preview. ') +
+              'OFP EETs from ' + (L.isPlan() ? 'the planned T/O (no T/O set)' : 'your T/O') + '.' };
     }
     var fr = firAt(R.e); R.fir = fr ? fr.name.toUpperCase() : '[FIR]';
     R.fl = FLX ? 'FL' + FLX : levelAt(R.e); R.flPlan = levelAt(R.e);
@@ -319,9 +359,22 @@ window.FPGlobe = function (host, D, L) {
     return 'ALL STATIONS, THIS IS ' + cs + ' IN THE ' + R.fir + ' FIR, POSITION ' + R.pos + ' AT ' + hh(R.t) + ', ' + R.fl + ', ' + dir + 'BOUND ' + R.awy +
       ', ESTIMATING ' + R.next + ' AT ' + hh(R.nextT) + ', ' + R.foll + ' NEXT. ' + cs + ', ' + R.fl + ', ' + dir + 'BOUND, ' + R.fir + ' FIR.';
   }
-  var SRC = { gps: 'Actual position – iPad GPS', tick: 'Actual – your last waypoint tick', plan: 'Planned position (no actual position available)' };
+  var SRC = { gps: 'iPad GPS position', tick: 'Elapsed time, corrected by your last waypoint tick', plan: 'Elapsed time (T/O + OFP EETs)' };
+  var DSRC = 'el'; try { DSRC = localStorage.getItem('fpapp:dsrc') === 'gps' ? 'gps' : 'el'; } catch (e) { }
+  function setDsrc(v) { DSRC = v; try { localStorage.setItem('fpapp:dsrc', v); } catch (e) { } if (v === 'gps' && !GPS.on) gpsSet(true); refreshPop(true); }
+  function eetAtDist(d) { for (var i = 0; i < RT.length - 1; i++) if (d <= CUM[i + 1] || i === RT.length - 2) { var L_ = CUM[i + 1] - CUM[i]; return RT[i].e + (RT[i + 1].e - RT[i].e) * (L_ ? Math.max(0, Math.min(1, (d - CUM[i]) / L_)) : 0); } return T; }
+  function gpsAlong(f) { var s = snap([f.lon, f.lat]); return { s: s, d: CUM[s.k] + s.at }; }
+  function xcheck(f) {   // GPS vs the elapsed-time (planned) position along the route
+    var g = gpsAlong(f), eC = Math.max(0, Math.min(T, mode === 'live' ? L.el() : pv)), dp = distAt(eC), dd = g.d - dp, eg = eetAtDist(g.d), dm = eg - eC;
+    if (Math.abs(dd) < 3) return 'matches the elapsed-time position';
+    return Math.round(Math.abs(dd)) + ' NM ' + (dd > 0 ? 'ahead of' : 'behind') + ' the elapsed-time position (≈ ' + Math.abs(Math.round(dm)) + ' min ' + (dm > 0 ? 'early' : 'late') + ')';
+  }
   function draftBox(R) {
-    return '<div class="gpsrc s-' + R.src + '"><b data-srcb>' + SRC[R.src] + '</b> <span data-srci>' + esc(R.info) + '</span></div>' +
+    var gf = gpsFix();
+    return '<div class="seg" role="group" aria-label="Position for the draft"><span>Position from</span><button type="button" data-g="src-el" class="' + (DSRC === 'el' ? 'on' : '') + '">Elapsed time</button>' +
+      '<button type="button" data-g="src-gps" class="' + (DSRC === 'gps' ? 'on' : '') + '">iPad GPS' + (gf ? '' : ' (no fix)') + '</button></div>' +
+      (gf ? '<div class="gpx2"><b>GPS cross-check:</b> <span data-xc>' + esc(xcheck(gf)) + '</span></div>' : '') +
+      '<div class="gpsrc s-' + R.src + '"><b data-srcb>' + SRC[R.src] + '</b> <span data-srci>' + esc(R.info) + '</span></div>' +
       '<div class="gpfl"><label>Actual FL <input class="gfl" inputmode="numeric" maxlength="3" placeholder="' + R.flPlan.replace(/\D/g, '') + '" value="' + esc(FLX) + '" aria-label="Actual flight level"></label>' +
       '<span>' + (FLX ? 'typed by you' : 'empty = planned ' + esc(R.flPlan)) + '</span>' + (FLX ? '<button type="button" data-g="flplan">Use plan</button>' : '') + (GPS.on ? '' : '<button type="button" data-g="gps">◎ Use iPad GPS</button>') + '</div>' +
       '<div class="gpmsg"><small>Broadcast draft – check it against the FMC before you transmit</small><span data-draft>' + esc(draftOf(R)) + '</span></div>';
@@ -332,7 +385,7 @@ window.FPGlobe = function (host, D, L) {
     var R = rpt(Math.max(0, Math.min(T, curE()))), d = pop.querySelector('[data-draft]'); if (!d) return;
     d.textContent = draftOf(R); var sb = pop.querySelector('[data-srcb]'), si = pop.querySelector('[data-srci]');
     if (sb.textContent !== SRC[R.src]) { refreshPop(true); return; }
-    si.textContent = R.info;
+    si.textContent = R.info; var xc = pop.querySelector('[data-xc]'), gf2 = gpsFix(); if (xc && gf2) xc.textContent = xcheck(gf2);
   }
   host.addEventListener('input', function (ev) { if (ev.target.classList && ev.target.classList.contains('gfl')) { setFL(ev.target.value); var R = rpt(Math.max(0, Math.min(T, curE()))); pop.querySelector('[data-draft]').textContent = draftOf(R); } });
   host.addEventListener('change', function (ev) { if (ev.target.classList && ev.target.classList.contains('gfl')) refreshPop(true); });
@@ -352,6 +405,29 @@ window.FPGlobe = function (host, D, L) {
     h += draftBox(rpt(eC));
     return h + IF.proc + '<div class="gpn">' + esc(IF.note) + ' ' + esc(IF.src) + ' Airways: OFP navlog (AWY column).</div>';
   }
+  function slopHtml(q) {
+    var toM = L.toMin(), lab = { authorized: '✓ SLOP authorized', not_authorized: '✗ SLOP NOT authorized – centreline', not_published: 'SLOP not published – centreline' }[q.st] || q.st;
+    return '<b class="gph">SLOP – ' + esc(q.fir) + ' ' + esc(q.name) + '</b><div class="gpst sl-' + q.st + '">' + lab + '</div><div>' + q.txt + '</div>' +
+      '<div>' + hm(q.a) + ' – ' + hm(q.b) + ' (' + zt(toM + q.a) + ' – ' + zt(toM + q.b) + ')</div>' +
+      (q.st === 'authorized' ? '<div>' + esc(SL.rule) + '</div>' : '<div>Fly the centreline in this FIR.</div>') + '<div class="gpn">' + esc(SL.src) + '. Tap this part of the route again to close.</div>';
+  }
+  function cpdlcHtml(q) {
+    var toM = L.toMin();
+    return '<b class="gph">CPDLC – ' + esc(q.fir) + ' ' + esc(q.name) + '</b>' +
+      (q.addr ? '<div class="gpst on2">Logon <b>' + esc(q.addr) + '</b>' + (q.st === 'trial' ? ' (trial)' : '') + ' · ' + esc(q.time) + (q.dl != null ? ' → by ' + hm(q.dl) + ' · ' + zt(toM + q.dl) : '') + '</div>' +
+        (q.lim && q.lim !== '-' ? '<div>Levels: ' + esc(q.lim) + '</div>' : '') + '<div>' + esc(q.note) + '</div>'
+        : '<div class="gpst">No CPDLC in Lido RSI for this FIR – voice (VHF / HF) and SATCOM.</div>') +
+      '<div>In the FIR ' + hm(q.a) + ' – ' + hm(q.b) + ' (' + zt(toM + q.a) + ' – ' + zt(toM + q.b) + ')</div><div class="gpn">' + esc(CP.src) + '. Tap again to close.</div>';
+  }
+  /* nearest 1-hour (420 NM) airport behind (return) and ahead - OM-C chain airports, CA / not usable excluded */
+  var CAND = G.apt.filter(function (a) { var ch = D.chain.filter(function (c) { return c.icao === a.icao; }); return ch.length && ch.some(function (c) { return c.cls !== 'CA'; }) && !/not usable/i.test(a.lab); });
+  CAND.forEach(function (a) { var s_ = snap([a.lon, a.lat]); a._along = CUM[s_.k] + s_.at; var ch = D.chain.filter(function (c) { return c.icao === a.icao; })[0]; a._cls = ch ? ch.cls : ''; });
+  function nearApts(ll, along) {
+    var back = null, ahead = null;
+    CAND.forEach(function (a) { var o = { a: a, d: d3.geoDistance(ll, [a.lon, a.lat]) * NM };
+      if (a._along <= along + 1) { if (!back || o.d < back.d) back = o; } else if (!ahead || o.d < ahead.d) ahead = o; });
+    return { back: back, ahead: ahead };
+  }
   function focusAction(n) {
     var a = null; G.acts.forEach(function (x) { if (x.n === n) a = x; }); if (!a) return;
     setFollow(false); fly(posAt(a.e), Math.max(k, 3.2), 550);
@@ -364,7 +440,7 @@ window.FPGlobe = function (host, D, L) {
   var LBL = [], RES = [];
   function label(t, p, o) { LBL.push({ t: t, x: p[0], y: p[1], o: o || {} }); }
   function placeLabels(c) {
-    var boxes = RES.slice(), wr = wrap.getBoundingClientRect();
+    var ctx = gx, boxes = RES.slice(), wr = wrap.getBoundingClientRect();
     host.querySelectorAll('.gctl, .gbadge, .gpop:not([hidden])').forEach(function (el) { var r = el.getBoundingClientRect(); if (r.width) boxes.push({ x: r.left - wr.left - 4, y: r.top - wr.top - 4, w: r.width + 8, h: r.height + 8 }); });
     LBL.sort(function (a, b) { return (b.o.pri || 0) - (a.o.pri || 0); });
     LBL.forEach(function (l) {
@@ -386,19 +462,20 @@ window.FPGlobe = function (host, D, L) {
       }
     });
   }
-  function rr(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
-  function tri(p, s) { ctx.beginPath(); ctx.moveTo(p[0], p[1] - s); ctx.lineTo(p[0] + s * 0.9, p[1] + s * 0.6); ctx.lineTo(p[0] - s * 0.9, p[1] + s * 0.6); ctx.closePath(); }
-  function draw() {
-    raf = 0; if (!W || !visible()) return;
-    var c = colors(), x = ctx; proj.translate([W / 2, H / 2]).scale(r0 * k).rotate(rot);
+  function rr(x, y, w, h, r) { gx.beginPath(); gx.moveTo(x + r, y); gx.arcTo(x + w, y, x + w, y + h, r); gx.arcTo(x + w, y + h, x, y + h, r); gx.arcTo(x, y + h, x, y, r); gx.arcTo(x, y, x + w, y, r); gx.closePath(); }
+  function tri(p, s) { gx.beginPath(); gx.moveTo(p[0], p[1] - s); gx.lineTo(p[0] + s * 0.9, p[1] + s * 0.6); gx.lineTo(p[0] - s * 0.9, p[1] + s * 0.6); gx.closePath(); }
+  function skey() { return [W, H, DPR, rot[0].toFixed(3), rot[1].toFixed(3), k.toFixed(4), themeVer, JSON.stringify(lay), pop.hidden ? '' : pop.offsetWidth + 'x' + pop.offsetHeight].join('|'); }
+  function renderStatic(c) {
+    if (SCV.width !== cv.width || SCV.height !== cv.height) { SCV.width = cv.width; SCV.height = cv.height; }
+    var x = sctx; gx = sctx; path = pathS; var B = base(r0 * k * PI / 180);
     x.setTransform(DPR, 0, 0, DPR, 0, 0); x.globalAlpha = 1; x.setLineDash([]); x.lineCap = 'round'; x.lineJoin = 'round';
     x.fillStyle = c.bg; x.fillRect(0, 0, W, H);
     x.beginPath(); path(SPHERE); x.fillStyle = c.ocean; x.fill();
     x.beginPath(); path(GRAT); x.strokeStyle = c.grat; x.lineWidth = 0.7; x.stroke();
-    x.beginPath(); path(LAND); x.fillStyle = c.land; x.fill(); x.strokeStyle = c.coast; x.lineWidth = 0.8; x.stroke();
-    if (lay.cty) { x.beginPath(); path(BORD); x.strokeStyle = c.border; x.lineWidth = 0.6; x.stroke(); }
+    x.beginPath(); path(B.land); x.fillStyle = c.land; x.fill(); x.strokeStyle = c.coast; x.lineWidth = 0.8; x.stroke();
+    if (lay.cty) { x.beginPath(); path(B.bord); x.strokeStyle = c.border; x.lineWidth = 0.6; x.stroke(); }
     x.beginPath(); path(SPHERE); x.strokeStyle = c.coast; x.lineWidth = 1.2; x.stroke();
-    LBL = []; HITS = []; RES = [];
+    LBL = []; HITS = []; RES = []; SWP = [];
     var big = k >= 2.2, huge = k >= 5;
     if (lay.cty && k >= 1.3) (W0.clab || []).forEach(function (l) { if (l[3] > (k < 2 ? 1 : (k < 4 ? 2 : 3))) return; var ll = [l[1], l[2]]; if (!vis(ll)) return; var p = proj(ll); if (onScreen(p)) label(l[0].toUpperCase(), p, { center: true, pri: 1, col: c.muted, font: '600 10px ' + c.font, size: 11 }); });
     if (lay.fir) {
@@ -408,7 +485,7 @@ window.FPGlobe = function (host, D, L) {
       G.firlab.forEach(function (l) { var ll = [l[2], l[1]]; if (!vis(ll)) return; var p = proj(ll); if (onScreen(p)) label(l[0], p, { center: true, pri: 2, col: c.fir, font: 'italic 600 11px ' + c.font, size: 12 }); });
     }
     if (IF && lay.ifbp) {
-      var cy = getComputedStyle(document.documentElement).getPropertyValue('--cyan').trim() || '#6cc6e6';
+      var cy = c.cyan;
       IF.polys.forEach(function (q) { x.beginPath(); path(q.f); x.fillStyle = cy; x.globalAlpha = 0.22; x.fill(); x.globalAlpha = 0.9; x.setLineDash([3, 4]); x.strokeStyle = cy; x.lineWidth = 1.6; x.stroke(); x.setLineDash([]); x.globalAlpha = 1;
         if (vis(q.lab)) { var lp = proj(q.lab); if (onScreen(lp)) label('IFBP · ' + q.name, lp, { center: true, pri: 4, col: cy, font: '800 11px ' + c.font, size: 12 }); } });
       IF.segs.forEach(function (q) {
@@ -419,23 +496,48 @@ window.FPGlobe = function (host, D, L) {
         if (q.w < q.a) { var wl = posAt(q.w); if (vis(wl)) { var wp = proj(wl); if (onScreen(wp)) label('IFBP listen ' + hm(q.w), wp, { pri: 7, col: cy, font: '800 11px ' + c.font, size: 12, off: 12 }); } }
       });
     }
+    if (SL && lay.slop) {
+      var SCOL = { authorized: c.grn, not_authorized: '#e5534b', not_published: c.muted }, STX = { authorized: '#0b1a0e', not_authorized: '#ffffff', not_published: c.bg };
+      SL.segs.forEach(function (q) {
+        var col = SCOL[q.st] || c.muted, key = 'slop:' + q.fir;
+        x.beginPath(); path(subLine(q.a, q.b)); x.strokeStyle = col; x.globalAlpha = q.st === 'not_published' ? 0.5 : 0.6; x.lineWidth = 20; x.lineCap = 'butt'; x.stroke(); x.globalAlpha = 1; x.lineCap = 'round';
+        for (var t = q.a + 1; t < q.b; t += 3) { var ll = posAt(t); if (!vis(ll)) continue; var pt = proj(ll); if (onScreen(pt)) HITS.push({ x: pt[0], y: pt[1], r: 0, lo: 1, key: key, html: function () { return slopHtml(q); } }); }
+        var mid = posAt((q.a + q.b) / 2); if (vis(mid)) { var mp = proj(mid); if (onScreen(mp)) label((q.st === 'authorized' ? '✓ SLOP ' : (q.st === 'not_authorized' ? '✗ SLOP ' : 'SLOP n/p ')) + q.fir, mp, { pri: 8, box: col, col: STX[q.st] || c.bg, font: '800 11px ' + c.font, size: 12, off: 16 }); }
+      });
+    }
+    if (CP && lay.cpdlc) {
+      var VIO = '#8f7cf0';
+      CP.segs.forEach(function (q) {
+        var key = 'cpdlc:' + q.fir;
+        x.beginPath(); path(subLine(q.a, q.b)); x.lineCap = 'butt';
+        if (q.addr) { x.strokeStyle = VIO; x.globalAlpha = 0.55; x.lineWidth = 20; if (q.st === 'trial') x.setLineDash([14, 8]); }
+        else { x.strokeStyle = c.muted; x.globalAlpha = 0.25; x.lineWidth = 12; }
+        x.stroke(); x.setLineDash([]); x.globalAlpha = 1; x.lineCap = 'round';
+        for (var t = q.a + 1; t < q.b; t += 3) { var ll = posAt(t); if (!vis(ll)) continue; var pt = proj(ll); if (onScreen(pt)) HITS.push({ x: pt[0], y: pt[1], r: 0, lo: 1, key: key, html: function () { return cpdlcHtml(q); } }); }
+        var mid = posAt((q.a + q.b) / 2);
+        if (vis(mid)) { var mp = proj(mid); if (onScreen(mp)) label(q.addr ? 'CPDLC ' + q.addr + (q.st === 'trial' ? ' (trial)' : '') : 'no CPDLC · ' + q.fir, mp, q.addr ? { pri: 8, box: VIO, col: '#ffffff', font: '800 11px ' + c.font, size: 12, off: 16 } : { pri: 3, col: c.muted, font: '700 11px ' + c.font, size: 12, off: 14 }); }
+        if (q.addr && q.dl != null) {
+          var dl = posAt(q.dl); if (vis(dl)) { var dp = proj(dl); if (onScreen(dp)) {
+            x.beginPath(); x.moveTo(dp[0], dp[1] - 8); x.lineTo(dp[0] + 8, dp[1]); x.lineTo(dp[0], dp[1] + 8); x.lineTo(dp[0] - 8, dp[1]); x.closePath(); x.fillStyle = VIO; x.fill(); x.strokeStyle = c.halo; x.lineWidth = 1.4; x.stroke();
+            HITS.push({ x: dp[0], y: dp[1], r: 7, key: key, html: function () { return cpdlcHtml(q); } });
+            label('logon ' + q.addr + ' by ' + hm(q.dl), dp, { pri: 9, col: VIO, font: '800 12px ' + c.font, size: 13, off: 11 }); } }
+        }
+      });
+    }
     if (lay.rings) {
       x.setLineDash([5, 6]);
       RINGS.forEach(function (r) { x.beginPath(); path(r.geo); x.strokeStyle = r.a.col; x.globalAlpha = 0.75; x.lineWidth = 1.4; x.stroke(); });
       x.setLineDash([]); x.globalAlpha = 1;
     }
     (G.etseg || []).forEach(function (s) { x.beginPath(); path(subLine(s[0], s[1])); x.strokeStyle = c.etops; x.lineWidth = 12; x.globalAlpha = 0.85; x.stroke(); x.globalAlpha = 1; });
-    var e = curE(), eC = Math.max(0, Math.min(T, e));
     x.beginPath(); path(ROUTE); x.strokeStyle = c.halo; x.lineWidth = 5.5; x.stroke();
     x.beginPath(); path(ROUTE); x.strokeStyle = c.route; x.lineWidth = 2.4; x.stroke();
-    if (eC > 0) { x.beginPath(); path(subLine(0, eC)); x.strokeStyle = c.grn; x.lineWidth = 3.2; x.stroke(); }
-    if (e >= 0 && e < T) { var sg = seg(eC); x.beginPath(); path({ type: 'LineString', coordinates: [posAt(eC), RC[sg.k + 1]] }); x.strokeStyle = c.mag; x.lineWidth = 3.6; x.stroke(); }
     // waypoints
     RT.forEach(function (w, i) {
       if (i === 0 || i === RT.length - 1) return;
       if (!w.m && !big) return;
       var ll = [w.lon, w.lat]; if (!vis(ll)) return; var p = proj(ll); if (!onScreen(p)) return;
-      tri(p, w.m ? 5.5 : 4); x.fillStyle = w.e <= eC ? c.grn : c.route; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke();
+      tri(p, w.m ? 5.5 : 4); x.fillStyle = c.route; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke(); SWP.push({ p: p, s: w.m ? 5.5 : 4, e: w.e });
       HITS.push({ x: p[0], y: p[1], r: w.m ? 4 : -14, html: function () { return wptHtml(w); } });
       if (lay.wpt && (w.m || huge)) label(w.n + (w.m ? ' ' + hm(w.e) : ''), p, { pri: w.m ? 6 : 3, font: (w.m ? '700 12px ' : '500 11px ') + c.font, size: w.m ? 13 : 12 });
       if (lay.wpt && w.m && w.note && huge) label(w.note, [p[0], p[1] + 14], { pri: 2, col: c.muted, font: 'italic 500 11px ' + c.font, size: 12 });
@@ -482,6 +584,24 @@ window.FPGlobe = function (host, D, L) {
       RES.push({ x: b[0] - 11, y: b[1] - 11, w: 22, h: 22 });
       HITS.push({ x: b[0], y: b[1], r: 10, html: function () { return '<b class="gph">' + a.n + ' · ' + esc(a.t) + ' – ' + hm(a.e) + '</b><div>' + esc(a.x) + '</div>'; } });
     });
+    placeLabels(c);
+    SHITS = HITS; path = pathD; gx = ctx;
+  }
+  function draw() {
+    raf = 0; if (!W || !visible()) return;
+    var c = colors(), x = ctx; proj.translate([W / 2, H / 2]).scale(r0 * k).rotate(rot);
+    var key = skey(); if (key !== SKEY) { renderStatic(c); SKEY = key; }
+    x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.drawImage(SCV, 0, 0);
+    x.setTransform(DPR, 0, 0, DPR, 0, 0); x.setLineDash([]); x.lineCap = 'round'; x.lineJoin = 'round';
+    gx = ctx; path = pathD; HITS = SHITS.slice(); LBL = []; RES = [];
+    var e = curE(), eC = Math.max(0, Math.min(T, e));
+    if (eC > 0) { x.beginPath(); path(subLine(0, eC)); x.strokeStyle = c.grn; x.lineWidth = 3.2; x.stroke(); }
+    if (e >= 0 && e < T) { var sg = seg(eC); x.beginPath(); path({ type: 'LineString', coordinates: [posAt(eC), RC[sg.k + 1]] }); x.strokeStyle = c.mag; x.lineWidth = 3.6; x.stroke(); }
+    SWP.forEach(function (w) { if (w.e > eC) return; tri(w.p, w.s); x.fillStyle = c.grn; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke(); });
+    if (lay.apt) { var na = nearApts(posAt(eC), distAt(eC)), pp0 = posAt(eC);
+      [[na.back, c.grn], [na.ahead, c.cyan]].forEach(function (z) {
+        if (!z[0]) return; x.beginPath(); path({ type: 'LineString', coordinates: [pp0, [z[0].a.lon, z[0].a.lat]] }); x.setLineDash([4, 5]); x.strokeStyle = z[1]; x.lineWidth = 1.8; x.globalAlpha = z[0].d <= 420 ? 0.9 : 0.4; x.stroke(); x.setLineDash([]); x.globalAlpha = 1; });
+    }
     // aircraft (planned position)
     var pp = posAt(eC);
     if (vis(pp)) {
@@ -496,13 +616,60 @@ window.FPGlobe = function (host, D, L) {
     if (gf && vis([gf.lon, gf.lat])) {
       var gp = proj([gf.lon, gf.lat]), gsn = snap([gf.lon, gf.lat]), gsv = gsOf(gf, gsn), hd = gf.hdg != null && !isNaN(gf.hdg) && gsv.gps ? gf.hdg : brg(RC[gsn.k], RC[gsn.k + 1]);
       var gq = proj([gf.lon + Math.sin(hd * PI / 180) * 0.3 / Math.max(0.2, Math.cos(gf.lat * PI / 180)), gf.lat + Math.cos(hd * PI / 180) * 0.3]);
-      var ga = gq ? Math.atan2(gq[0] - gp[0], -(gq[1] - gp[1])) : 0, cyc = getComputedStyle(document.documentElement).getPropertyValue('--cyan').trim() || '#6cc6e6';
+      var ga = gq ? Math.atan2(gq[0] - gp[0], -(gq[1] - gp[1])) : 0, cyc = c.cyan;
       x.beginPath(); x.arc(gp[0], gp[1], 19, 0, 2 * PI); x.fillStyle = cyc; x.globalAlpha = 0.22; x.fill(); x.globalAlpha = 1;
       if (PLANE) { x.save(); x.translate(gp[0], gp[1]); x.rotate(ga); x.scale(1.2, 1.2); x.fillStyle = cyc; x.fill(PLANE); x.lineWidth = 1.3; x.strokeStyle = c.halo; x.stroke(PLANE); x.restore(); }
       HITS.push({ x: gp[0], y: gp[1], r: 14, html: gpsHtml });
       label('◎ GPS ' + hh(mod(gf.t)) + 'Z', gp, { pri: 99, box: cyc, col: '#06222c', font: '800 12px ' + c.font, size: 13, off: 20 });
     }
     placeLabels(c);
+  }
+
+  /* ---------- side view: MORA along the route, planned levels, aircraft; return / ahead airports either side */
+  var PV = host.querySelector('.gpsvg'), PX0 = 52, PX1 = 990, PY0 = 158, PY1 = 24, PMAX = 42000;
+  function px(e) { return PX0 + (PX1 - PX0) * Math.max(0, Math.min(T, e)) / T; }
+  function py(ft) { return PY0 - (PY0 - PY1) * Math.max(0, Math.min(PMAX, ft)) / PMAX; }
+  function lvlAt(e) { var P = PR.pts; for (var i = 0; i < P.length - 1; i++) if (e <= P[i + 1][0]) { var f = P[i + 1][0] > P[i][0] ? (e - P[i][0]) / (P[i + 1][0] - P[i][0]) : 1; return P[i][1] + (P[i + 1][1] - P[i][1]) * Math.max(0, Math.min(1, f)); } return 0; }
+  if (PV && PR) (function () {
+    var h = '';
+    D.firs.forEach(function (f, i) { var b = i + 1 < D.firs.length ? D.firs[i + 1].eet_min : T; h += '<rect x="' + px(f.eet_min) + '" y="2" width="' + (px(b) - px(f.eet_min)) + '" height="14" class="' + f.cls + '"/><text x="' + (px(f.eet_min) + 3) + '" y="13" class="ptx b">' + esc(f.fir) + '</text>'; });
+    [10000, 20000, 30000, 40000].forEach(function (ft) { h += '<line x1="' + PX0 + '" x2="' + PX1 + '" y1="' + py(ft) + '" y2="' + py(ft) + '" class="pg"/><text x="' + (PX0 - 4) + '" y="' + (py(ft) + 4) + '" class="ptx r">FL' + ft / 100 + '</text>'; });
+    for (var m = 0; m <= T; m += 60) h += '<line x1="' + px(m) + '" x2="' + px(m) + '" y1="' + PY1 + '" y2="' + PY0 + '" class="pg"/>';
+    var hi = null;
+    PR.mora.forEach(function (q) { var c_ = q[2] > 10000 ? 'mo2' : (q[2] > 5000 ? 'mo1' : 'mo0'); h += '<rect x="' + px(q[0]) + '" y="' + py(q[2]) + '" width="' + Math.max(0.6, px(q[1]) - px(q[0])) + '" height="' + (PY0 - py(q[2])) + '" class="' + c_ + '"/>'; if (!hi || q[2] > hi[2]) hi = q; });
+    if (hi) h += '<text x="' + ((px(hi[0]) + px(hi[1])) / 2) + '" y="' + (py(hi[2]) - 4) + '" class="ptx c mo">MORA ' + hi[2] + '</text>';
+    if (D.etops) h += '<rect x="' + px(D.etops[0]) + '" y="' + (PY0 + 1) + '" width="' + (px(D.etops[1]) - px(D.etops[0])) + '" height="5" class="pet"/>';
+    h += '<polyline class="plv" points="' + PR.pts.map(function (q) { return px(q[0]) + ',' + py(q[1]); }).join(' ') + '"/>';
+    var lastX = -99;
+    RT.forEach(function (w, i) { if (!w.m && i !== 0 && i !== RT.length - 1) return; var xx = px(w.e); h += '<line x1="' + xx + '" x2="' + xx + '" y1="' + PY0 + '" y2="' + (PY0 + 7) + '" class="ptk"/>';
+      if (xx - lastX > 34) { h += '<text x="' + xx + '" y="' + (PY0 + 18) + '" class="ptx c">' + esc(w.n) + '</text><text x="' + xx + '" y="' + (PY0 + 29) + '" class="ptx c m">' + hm(w.e) + '</text>'; lastX = xx; } });
+    h += '<line class="pnow" x1="0" x2="0" y1="' + PY1 + '" y2="' + PY0 + '"/><g class="pgps" style="display:none"><circle r="7"/></g>' +
+      '<g class="pac"><circle r="13" class="pah"/><path d="M0,-15C1.7,-15 2.2,-12 2.2,-9.5L2.2,-3.5L14,3L14,6L2.2,2.6L2.2,9L5.5,12L5.5,14.2L0,12.8L-5.5,14.2L-5.5,12L-2.2,9L-2.2,2.6L-14,6L-14,3L-2.2,-3.5L-2.2,-9.5C-2.2,-12 -1.7,-15 0,-15Z" transform="rotate(90) scale(0.85)"/></g>';
+    PV.innerHTML = h;
+    function pick(ev) { var r = PV.getBoundingClientRect(); if (!r.width) return; var xv = (ev.clientX - r.left) / r.width * 1000, e = (xv - PX0) / (PX1 - PX0) * T; stopPlay(); pv = Math.max(0, Math.min(T, e)); setMode('preview'); if (follow) centerPlane(false); }
+    var dn = false;
+    PV.addEventListener('pointerdown', function (ev) { dn = true; try { PV.setPointerCapture(ev.pointerId); } catch (x_) { } pick(ev); });
+    PV.addEventListener('pointermove', function (ev) { if (dn) pick(ev); });
+    PV.addEventListener('pointerup', function () { dn = false; }); PV.addEventListener('pointercancel', function () { dn = false; });
+  })();
+  function aptBox(o, dir) {
+    if (!o) return '<small>' + (dir < 0 ? '◀ RETURN' : 'AHEAD ▶') + '</small><b>–</b>';
+    var near = o.d <= 420, mins = Math.round(o.d / 7);
+    return '<small>' + (dir < 0 ? '◀ RETURN · 1 h' : 'AHEAD · 1 h ▶') + '</small><b>' + esc(o.a.icao) + ' <i>' + esc(o.a._cls) + '</i></b><span>' + Math.round(o.d) + ' NM · ≈' + mins + ' min</span>' +
+      '<em>' + (near ? 'within 420 NM' : 'beyond 1 h (420 NM)') + '</em>';
+  }
+  var GB = host.querySelector('.gback'), GA = host.querySelector('.gahead');
+  function updProfile() {
+    if (!PV || !PR) return;
+    var e = curE(), eC = Math.max(0, Math.min(T, e)), xx = px(eC), yy = py(e < 0 ? 0 : lvlAt(eC));
+    var pn = PV.querySelector('.pnow'); pn.setAttribute('x1', xx); pn.setAttribute('x2', xx);
+    PV.querySelector('.pac').setAttribute('transform', 'translate(' + xx + ',' + yy + ')');
+    PV.querySelector('.pac').classList.toggle('prev', mode !== 'live');
+    var gf = gpsFix(), gp = PV.querySelector('.pgps');
+    if (gf) { var ga = gpsAlong(gf), ex = px(eetAtDist(ga.d)); gp.style.display = ''; gp.setAttribute('transform', 'translate(' + ex + ',' + yy + ')'); } else gp.style.display = 'none';
+    var na = nearApts(posAt(eC), distAt(eC));
+    GB.innerHTML = aptBox(na.back, -1); GB.classList.toggle('far', !!na.back && na.back.d > 420);
+    GA.innerHTML = aptBox(na.ahead, 1); GA.classList.toggle('far', !!na.ahead && na.ahead.d > 420);
   }
 
   /* ---------- public */
@@ -512,8 +679,17 @@ window.FPGlobe = function (host, D, L) {
   return {
     tick: function () { if (!visible()) return; if (mode === 'live') { if (follow) centerPlane(false); updBar(); } refreshPop(false); req(); },
     shown: function () { size(); updBar(); req(); },
-    restyle: function () { C = null; req(); },
+    restyle: function () { C = null; themeVer++; req(); },
     focusAction: focusAction,
+    _bench: function (n, move) { var t0 = performance.now(); for (var i = 0; i < (n || 10); i++) { if (move) rot = [rot[0] + 0.3, rot[1], 0]; draw(); } return (performance.now() - t0) / (n || 10); },
+    pos: function (e) { return posAt(Math.max(0, Math.min(T, e))); },
+    xcheck: function () { var f = gpsFix(); return f ? xcheck(f) : null; },   // GPS vs elapsed-time position (null without a fix)
+    info: function (e) {   // for the NOW screen: planned position, distance to go, nearest 1-h airports behind / ahead, planned level, TOD
+      var eC = Math.max(0, Math.min(T, e)), ll = posAt(eC), na = nearApts(ll, distAt(eC)), f = function (o) { return o ? { icao: o.a.icao, cls: o.a._cls, d: Math.round(o.d), lab: o.a.lab } : null; };
+      var tod = null; if (PR) for (var i = 0; i < PR.pts.length - 1; i++) if (PR.pts[i + 1][1] < PR.pts[i][1] && PR.pts[i][1] >= 10000) { tod = PR.pts[i][0]; break; }
+      return { pos: ll, togo: Math.round(CUM[CUM.length - 1] - distAt(eC)), back: f(na.back), ahead: f(na.ahead), lvl: PR ? Math.round(lvlAt(eC)) : null,
+        vs: PR ? lvlAt(Math.min(T, eC + 2)) - lvlAt(Math.max(0, eC - 2)) : 0, tod: tod };
+    },
     showIfbp: function () { if (IF) showPop(ifbpHtml(), true, 'ifbp'); },
     project: function (lon, lat) { return vis([lon, lat]) ? proj([lon, lat]) : null; }
   };

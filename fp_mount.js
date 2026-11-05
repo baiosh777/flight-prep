@@ -7,7 +7,7 @@ window.FPMount = function (rec, opt) {
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   document.title = rec.title + (opt.app ? ' · Flight Prep' : '');
   $('cs').textContent = rec.header.callsign; $('fl-b').textContent = rec.header.fltxt; $('fl-small').textContent = rec.header.sub;
-  $('planbanner').innerHTML = rec.planbanner; $('wpt-static').innerHTML = rec.wpt_static; $('v-calls').innerHTML = rec.calls;
+  $('planbanner').innerHTML = rec.planbanner; $('wpt-static').innerHTML = rec.wpt_static; var vc = $('v-calls'); if (vc) vc.innerHTML = rec.calls || '';
   // static pack pages, in pack order
   var sv = '';
   rec.tabs.forEach(function (t) { if (rec.views[t[0]]) sv += '<section id="v-' + t[0] + '" class="view" data-view="' + t[0] + '" hidden>' + rec.views[t[0]] + '</section>'; });
@@ -15,7 +15,7 @@ window.FPMount = function (rec, opt) {
   // the pack sequence strip (NOW has its own button in the header); a thin gap between groups
   var h = '', g = null;
   rec.tabs.forEach(function (t) {
-    if (t[0] === 'now') return;
+    if (t[0] === 'now' || !$('v-' + t[0])) return;   // skip pages this shell / record does not have
     if (g !== null && t[2] && t[2] !== g) h += '<span class="tsep" aria-hidden="true"></span>';
     g = t[2] || g;
     h += '<a href="#' + t[0] + '" data-v="' + t[0] + '">' + esc(t[1]) + '</a>';

@@ -1,7 +1,7 @@
 /* Flight Prep - offline app shell. Stores flight files in IndexedDB, mounts the current flight, then hands over to FPLive (fp_live.js). */
 (function () {
   'use strict';
-  var APP_VERSION = '1.1.0 (05 NOV 2026)';
+  var APP_VERSION = '1.2.0 (05 NOV 2026)';
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
