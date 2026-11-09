@@ -3,6 +3,7 @@
    picture viewer, globe map (fp_globe.js), settings and navigation to the DOM. */
 window.FPLive = function (D) {
   'use strict';
+  window.FPData = D;   // v3: shared read access for the small helpers (fp_refs.js)
   var F = D.flight, T = F.trip, FC_MIN = 55;
   var KEY = 'fp:' + F.id, PKEY = 'fpapp:prefs';
   function def() { return { to: null, passed: -1, times: {}, done: {}, fuel: {}, fc: null, fcLog: [], ib: null }; }
@@ -27,7 +28,16 @@ window.FPLive = function (D) {
   function isPlan() { return parseTO(S.to) === null; }
   function toMin() { var t = parseTO(S.to); return t === null ? F.to_plan : t; }
   // minutes after take-off; negative = take-off still ahead (up to 3 h)
-  function el() { var e = nowMin() - toMin(); if (e < 0) e += 1440; if (e > 1440 - 180) e -= 1440; return e; }
+  function elReal() { var e = nowMin() - toMin(); if (e < 0) e += 1440; if (e > 1440 - 180) e -= 1440; return e; }
+  /* v3 (user 09 NOV 26): the actual time over a waypoint (tap, or typed) revises every later time - minutes late (+) / early (-) on the plan */
+  function utcMinOf(iso) { var d = new Date(iso); return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60; }
+  function atoRow() { for (var i = S.passed; i >= 0; i--) { var r = D.rows[i]; if (S.times[i] && r && r.eet != null) return i; } return -1; }
+  function offMin() { var i = atoRow(); if (i < 0) return 0; var dl = utcMinOf(S.times[S.passed >= i ? i : i]) - (toMin() + D.rows[i].eet); dl = ((dl + 720) % 1440 + 1440) % 1440 - 720; return Math.abs(dl) > 240 ? 0 : dl; }
+  function rev(eet) { var i = atoRow(); return i >= 0 && eet != null && eet >= D.rows[i].eet ? eet + offMin() : eet; }   // revised EET of a planned time
+  function el() { return elReal() - offMin(); }   // where we are on the plan (planned EET matching now)
+  function zr(t) { return zt(toMin() + rev(t)); }   // planned EET -> revised UTC
+  function hr(t) { return hm(rev(t)); }               // planned EET -> revised EET
+  window.FPTimes = { rev: rev, off: offMin, elReal: elReal };
   function inTxt(d) { if (d < 0) return 'overdue ' + hm(Math.ceil(-d)); if (d < 1) return 'now'; return 'in ' + (d < 60 ? Math.ceil(d) + ' min' : hm(Math.ceil(d))); }
   function isoZ(iso) { try { var d = new Date(iso); return pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + 'Z'; } catch (e) { return ''; } }
   var globe = null;
@@ -121,7 +131,7 @@ window.FPLive = function (D) {
     tr.setAttribute('aria-label', r.wpt + ' – tap when passed');
     if (r.bnd) tr.classList.add('bnd');
     var mc = r.mora == null ? '' : (r.mora > 10000 ? 'red' : (r.mora > 5000 ? 'amb' : ''));
-    tr.innerHTML = '<td class="eet"><span class="ck" aria-hidden="true"></span><span class="et">' + (r.eet == null ? esc(r.label || '-') : hm(r.eet)) + '</span><div class="st"></div></td>' +
+    tr.innerHTML = '<td class="eet"><span class="ck" aria-hidden="true"></span><span class="et">' + (r.eet == null ? esc(r.label || '-') : hm(r.eet)) + '</span><small class="rv" hidden></small><div class="st"></div></td>' +
       '<td class="wp">' + esc(r.wpt) + '</td><td class="fir ' + r.fc + '">' + (r.bnd ? '▶ ' : '') + esc(r.fir) + '<small>' + esc(r.firname) + '</small></td>' +
       '<td class="cmt">' + r.call + '</td><td>' + r.special + '</td><td>' + r.threat + '</td>' +
       '<td class="mora ' + mc + '">' + (r.mora == null ? '-' : r.mora) + '</td>' +
@@ -130,33 +140,60 @@ window.FPLive = function (D) {
     tr.addEventListener('keydown', function (e) { if (e.target.closest && e.target.closest('details, summary, button, a')) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r.i); } });
     tb.appendChild(tr); trs.push(tr);
   });
+  if (window.FPRefs) window.FPRefs.scan(wtab);   // v3: document references in the comms / special / threat cells
   nowRow = document.createElement('tr'); nowRow.className = 'nowline'; nowRow.innerHTML = '<td colspan="8"><div></div></td>';
   function tap(i) {
     if (i <= S.passed) { for (var j = i; j <= S.passed; j++) delete S.times[j]; S.passed = i - 1; }
     else { S.times[i] = new Date().toISOString(); S.passed = i; }
     save(); paintWpt(); tick(true);
   }
+  function setAto(i, hhmm) {
+    var m = parseTO(hhmm); if (m === null) return false;
+    var d = new Date(); var base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), Math.floor(m / 60), m % 60);
+    if (base - Date.now() > 6 * 3600000) base -= 86400000; if (Date.now() - base > 18 * 3600000) base += 86400000;   // the HHMM closest to now
+    S.times[i] = new Date(base).toISOString(); if (S.passed < i) S.passed = i; save(); document.querySelectorAll('.atoi').forEach(function (x) { x.remove(); }); paintWpt(); tick(true);
+    toast(D.rows[i].wpt + ' overflown at ' + isoZ(S.times[i]) + ' – later times revised ' + (Math.round(offMin()) ? (offMin() > 0 ? '+' : '−') + Math.abs(Math.round(offMin())) + ' min' : 'on time') + '.');
+    return true;
+  }
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('.atob'); if (!b) return; ev.preventDefault(); ev.stopPropagation();
+    var i = +b.dataset.ato, st = b.parentNode, cur = S.times[i] ? isoZ(S.times[i]).slice(0, 4) : nowHHMM();
+    st.innerHTML = '<span class="atoi"><input inputmode="numeric" maxlength="4" value="' + cur + '" aria-label="Actual time over, HHMM UTC"><button type="button" class="ok">Set</button><button type="button" class="now">Now</button><button type="button" class="x" aria-label="Cancel">✕</button></span>';
+    var inp = st.querySelector('input'); inp.focus(); inp.select();
+    st.querySelector('.ok').onclick = function (e) { e.stopPropagation(); if (!setAto(i, inp.value)) { inp.classList.add('bad'); return; } };
+    st.querySelector('.now').onclick = function (e) { e.stopPropagation(); setAto(i, nowHHMM()); };
+    st.querySelector('.x').onclick = function (e) { e.stopPropagation(); st.innerHTML = ''; paintWpt(); };
+    inp.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); if (!setAto(i, inp.value)) inp.classList.add('bad'); } if (e.key === 'Escape') { st.innerHTML = ''; paintWpt(); } };
+    inp.onclick = function (e) { e.stopPropagation(); };
+  }, true);
+  window.FPCore = { D: D, S: S, tap: tap, setAto: setAto, setTO: function (v) { setTO(v); }, el: el, elReal: elReal, rev: rev, offMin: offMin, atoRow: atoRow, hm: hm, zt: zt, toMin: toMin, isoZ: isoZ, inTxt: inTxt, nowHHMM: nowHHMM, isPlan: isPlan, save: save, toast: toast };
+  if (window.FPUx) window.FPUx.init(window.FPCore);
   on('undo', 'click', function () { if (S.passed >= 0) { delete S.times[S.passed]; S.passed--; save(); paintWpt(); tick(true); } });
   on('reset', 'click', function () { ask('Clear all passed waypoints?', 'Clear', function () { S.passed = -1; S.times = {}; save(); paintWpt(); tick(true); }); });
   on('wpt-next', 'click', function () { jumpNext(true); });
   function paintWpt() {
+    if (window.FPUx) window.FPUx.paintLegs();
     var e = el(), nxt = S.passed + 1;
     D.rows.forEach(function (r, i) {
       var tr = trs[i], st = tr.querySelector('.st'), h = '';
       tr.classList.toggle('passed', i <= S.passed);
       tr.classList.toggle('next', i === nxt);
-      if (i <= S.passed) h = S.times[i] ? '<span class="chip ata">' + isoZ(S.times[i]) + '</span>' : '';
+      var ar = atoRow(), off = offMin(), rv = tr.querySelector('.rv');
+      if (i <= S.passed) h = (S.times[i] ? '<span class="chip ata" title="actual time over">' + (r.eet != null ? hm(utcMinOf(S.times[i]) - toMin() < -60 ? utcMinOf(S.times[i]) - toMin() + 1440 : utcMinOf(S.times[i]) - toMin()) + ' · ' : '') + isoZ(S.times[i]) + '</span>' : '') +
+        '<button type="button" class="atob" data-ato="' + i + '" aria-label="Set the actual time over ' + esc(r.wpt) + '">time</button>';
       else {
         if (i === nxt) h += '<span class="chip next">NEXT</span> ';
         if (r.eet != null && r.eet < e - 1) h += '<span class="chip due">DUE</span>';
+        if (i === nxt && r.eet != null) h += '<button type="button" class="atob" data-ato="' + i + '" aria-label="Set the actual time over ' + esc(r.wpt) + '">time</button>';
       }
-      st.innerHTML = h;
+      if (rv) { var show = ar >= 0 && i > ar && r.eet != null && Math.round(off) !== 0; rv.hidden = !show; if (show) rv.textContent = 'rev ' + hm(r.eet + off) + ' · ' + zt(toMin() + r.eet + off); }
+      if (!tr.querySelector('.atoi')) st.innerHTML = h;
     });
     if (nowRow.parentNode) nowRow.parentNode.removeChild(nowRow);
     if (e >= 0 && e <= T + 30) {
       var at = null;
       for (var k = 0; k < D.rows.length; k++) if (D.rows[k].eet != null && D.rows[k].eet > e) { at = trs[k]; break; }
-      nowRow.querySelector('div').textContent = 'NOW ' + hm(e) + (isPlan() ? '  (planned T/O – no T/O set)' : '');
+      var ofn = Math.round(offMin()); nowRow.querySelector('div').textContent = 'NOW ' + hm(elReal()) + (isPlan() ? '  (planned T/O – no T/O set)' : '') + (ofn ? '  ·  ' + (ofn > 0 ? ofn + ' min late' : (-ofn) + ' min early') + ' on the plan since ' + D.rows[atoRow()].wpt : '');
       if (at) tb.insertBefore(nowRow, at); else tb.appendChild(nowRow);
     }
   }
@@ -340,7 +377,7 @@ window.FPLive = function (D) {
     var eC = Math.max(0, Math.min(T, e)), inf = globe ? globe.info(eC) : null, h = '', cf = curFir(Math.max(0, e)), nf = null, air = e >= 0 && e <= T;
     D.firs.forEach(function (f) { if (!nf && f.eet_min > Math.max(0, e)) nf = f; });
     if (e < 0) h += chip('ON GROUND', 'T/O in ' + hm(Math.ceil(-e)) + (isPlan() ? ' (planned)' : ''), '');
-    else if (e > T) h += chip('LANDED', 'planned ' + zt(toMin() + T), '');
+    else if (e > T) h += chip('LANDED', 'planned ' + zr(T), '');
     else if (inf && inf.lvl != null) h += chip(inf.vs > 300 ? 'CLIMB' : (inf.vs < -300 ? 'DESCENT' : 'CRUISE'), (inf.lvl >= 10000 ? 'FL' + String(Math.round(inf.lvl / 100)).padStart(3, '0') : Math.round(inf.lvl / 100) * 100 + ' ft') + ' <small>plan</small>', '', true);
     if (cf && e <= T) h += chip(e < 0 ? 'DEP FIR' : 'FIR', esc(cf.fir) + ' ' + esc(cf.name) + (nf ? ' <small>→ ' + esc(nf.fir) + ' ' + inTxt(nf.eet_min - e) + '</small>' : ''), 'fir');
     var se = sunAt(e), night = se != null ? se < -0.833 : null;
@@ -382,7 +419,7 @@ window.FPLive = function (D) {
     if (na) {
       var d0 = na.t - e, inn = box.querySelector('.in');
       inn.textContent = cdTxt(d0); inn.className = 'in ' + stCls(na, e);
-      box.querySelector('[data-meta]').textContent = 'Next action · EET ' + hm(na.t) + ' · ' + zt(toMin() + na.t) + (na.kind === 'call' ? ' · call / log-on deadline' : '');
+      box.querySelector('[data-meta]').textContent = 'Next action · EET ' + hr(na.t) + ' · ' + zr(na.t) + (na.kind === 'call' ? ' · call / log-on deadline' : '');
     }
     renderStrip(e);
     var ul = $('upnext');
@@ -392,7 +429,7 @@ window.FPLive = function (D) {
         ul._sig = us;
         ul.innerHTML = rest.map(function (x) {
           return '<li class="un ' + stCls(x, e) + '"><span class="unin" data-t="' + x.t + '"></span><span class="tag k-' + x.kind + '">' + (KIND[x.kind] || x.kind.toUpperCase()) + '</span>' +
-            '<span class="unw">' + esc(x.what) + '</span><span class="unz">' + hm(x.t) + ' · ' + zt(toMin() + x.t) + '</span>' +
+            '<span class="unw">' + esc(x.what) + '</span><span class="unz">' + hr(x.t) + ' · ' + zr(x.t) + '</span>' +
             (x.kind === 'call' ? '<button type="button" data-done="' + esc(x.id) + '">Done</button>' : '') + '</li>';
         }).join('') || '<li class="un"><span class="unw">Nothing else planned.</span></li>';
       }
@@ -418,11 +455,11 @@ window.FPLive = function (D) {
         'return / ahead along the route · within 420 NM now (OM-C chain): ' + (near.length ? esc(near.slice(0, 5).join(' · ')) : '<b class="r">none</b>')));
     }
     var lp = null, np = null; D.route.forEach(function (p) { if (p.e <= e) lp = p; else if (!np) np = p; });
-    if (nr) C.push(card('nw', 'Next waypoint', esc(nr.wpt) + ' ' + hm(nr.eet), 'mag', inTxt(nr.eet - e) + (S.passed >= 1 && S.passed + 1 < D.rows.length && D.rows[S.passed + 1].eet != null && D.rows[S.passed + 1].wpt !== nr.wpt ? ' · ticked next: ' + esc(D.rows[S.passed + 1].wpt) : '') +
-      (np ? ' · navlog next ' + esc(np.n) + ' ' + hm(np.e) + ' (' + inTxt(np.e - e) + ')' : '')));
-    var eta = toMin() + T, lt = (((eta + F.arr_off * 60) % 1440) + 1440) % 1440;
+    if (nr) C.push(card('nw', 'Next waypoint', esc(nr.wpt) + ' ' + hr(nr.eet), 'mag', inTxt(nr.eet - e) + (S.passed >= 1 && S.passed + 1 < D.rows.length && D.rows[S.passed + 1].eet != null && D.rows[S.passed + 1].wpt !== nr.wpt ? ' · ticked next: ' + esc(D.rows[S.passed + 1].wpt) : '') +
+      (np ? ' · navlog next ' + esc(np.n) + ' ' + hr(np.e) + ' (' + inTxt(np.e - e) + ')' : '')));
+    var eta = toMin() + rev(T), lt = (((eta + F.arr_off * 60) % 1440) + 1440) % 1440;
     C.push(card('eta', 'ETA ' + esc(F.arr), zt(eta), '', pad(Math.floor(lt / 60)) + pad(lt % 60) + ' LT · ' + (e >= 0 ? hm(Math.max(0, T - e)) + ' to go' : 'trip ' + hm(T)) + (isPlan() ? ' · planned' : '') +
-      (inf ? ' · ' + inf.togo.toLocaleString('en-GB') + ' NM' + (inf.tod != null && inf.tod > e ? ' · TOD ~' + hm(inf.tod) + ' (' + zt(toMin() + inf.tod) + ')' : '') : '')));
+      (inf ? ' · ' + inf.togo.toLocaleString('en-GB') + ' NM' + (inf.tod != null && inf.tod > e ? ' · TOD ~' + hr(inf.tod) + ' (' + zr(inf.tod) + ')' : '') : '')));
     var mx = 0, mw = ''; D.mora.forEach(function (p) { if (p.eet_min >= e && p.eet_min <= e + 30 && p.mora > mx) { mx = p.mora; mw = p.name; } });
     C.push(card('mora', 'MORA next 30 min', mx ? mx + ' ft' : '-', mx > 10000 ? 'red' : (mx > 5000 ? 'amb' : ''), mx ? 'highest at ' + esc(mw) : ''));
     putCards(C);
@@ -442,8 +479,10 @@ window.FPLive = function (D) {
     var elb = $('elapsed'), box = elb.parentNode;
     box.classList.toggle('plan', isPlan());
     $('el-lab').textContent = isPlan() ? 'PLAN (no T/O)' : (e < 0 ? 'TO T/O' : 'ELAPSED');
-    elb.textContent = e > T + 240 ? 'CHECK T/O' : hm(e);
-    $('eta').textContent = zt(toMin() + T);
+    var eR = elReal(), off = offMin();
+    elb.textContent = eR > T + 240 ? 'CHECK T/O' : hm(eR);
+    $('eta').textContent = zt(toMin() + T + off);
+    var offEl = $('eta-off'); if (offEl) { var ro = Math.round(off); offEl.hidden = !ro; offEl.textContent = ro ? (ro > 0 ? '+' + ro + ' LATE' : (-ro) + ' EARLY') : ''; offEl.className = 'etaoff ' + (ro > 0 ? 'late' : 'early'); }
     var elt = $('eta-lt'); if (elt) { var lt_ = ((toMin() + T + Math.round((F.arr_off || 0) * 60)) % 1440 + 1440) % 1440; elt.textContent = pad(Math.floor(lt_ / 60)) + pad(lt_ % 60) + ' LT'; }
     if (TL) { var x = X(e), nl = $('tl-now'); if (nl) { nl.setAttribute('x1', x); nl.setAttribute('x2', x); nl.style.display = (e >= 0 && e <= T) ? '' : 'none'; } }
     var cn = $('chain-now');
@@ -454,7 +493,11 @@ window.FPLive = function (D) {
     if (CUR === 'waypoints') { paintCalls(e); if (force || Date.now() - lastPaint > 5000) { paintWpt(); lastPaint = Date.now(); } }
     if (globe && (CUR === 'route-map' || CUR === 'cockpit')) globe.tick(e);
     if (TOOLS) TOOLS.tick(e);
+    if (window.FPUx) window.FPUx.tick();
+    if (CUR === 'wxnotam' && TOOLS && TOOLS.wxnt && (force || Date.now() - lastWx > 60000)) { lastWx = Date.now(); TOOLS.wxnt(); }
+    if (CUR === 'dash' && TOOLS && TOOLS.wn && TOOLS.wn.dash && (force || Date.now() - lastWx > 60000)) { lastWx = Date.now(); TOOLS.wn.dash(); }
   }
+  var lastWx = 0;
 
   /* ---------- full-screen picture viewer (pinch / drag / double-tap / + - Fit) */
   function viewer() {
@@ -539,6 +582,7 @@ window.FPLive = function (D) {
     if (P.theme === 'dark' || P.theme === 'light' || P.theme === 'night') document.documentElement.setAttribute('data-theme', P.theme); else document.documentElement.removeAttribute('data-theme');
     if ($('theme')) $('theme').textContent = 'Theme: ' + P.theme;
     if (globe) globe.restyle();
+    if (window.FPImg) window.FPImg.themeChanged();
   }
   on('theme', 'click', function () { P.theme = { auto: 'dark', dark: 'night', night: 'light', light: 'auto' }[P.theme] || 'auto'; savePrefs(); applyTheme(); });
   var lock = null;
@@ -577,6 +621,7 @@ window.FPLive = function (D) {
     if (!views[h] && h !== 'cockpit') h = 'now';
     if (h === 'cockpit' && (window.innerWidth < 1000 || !views['route-map'])) h = 'now';   // split cockpit view: landscape iPad only
     var split = h === 'cockpit';
+    if (window.FPMount && window.FPMount.ensure) { if (split) { window.FPMount.ensure('now'); window.FPMount.ensure('route-map'); } else window.FPMount.ensure(h); }   // v3: big pages are mounted on first show
     document.body.classList.toggle('split', split);
     document.body.classList.toggle('mapfs', h === 'route-map'); document.documentElement.classList.toggle('mapfs', h === 'route-map');   // v2.0: MAP tab full screen, compact header
     Object.keys(views).forEach(function (k) { views[k].hidden = split ? !(k === 'now' || k === 'route-map') : (k !== h); }); CUR = h;
@@ -587,26 +632,36 @@ window.FPLive = function (D) {
     if (dto && tol && !dto.contains(tol)) dto.appendChild(tol);
     pager(h); layoutVars(); window.scrollTo(0, 0); tick(true);
     if (h === 'waypoints') setTimeout(function () { jumpNext(false); }, 60);
-    if (globe && (h === 'route-map' || split)) setTimeout(function () { globe.shown(); }, 0);
+    if (h === 'route-map' || split) { makeGlobe(); if (globe) setTimeout(function () { globe.shown(); }, 0); }
+    if (h === 'wxnotam' && TOOLS && TOOLS.wxnt) TOOLS.wxnt();
+    if (h === 'dash' && TOOLS && TOOLS.wn && TOOLS.wn.dash) TOOLS.wn.dash();
+    if (h === 'regs' && window.FPRegs) window.FPRegs.render();
+    if (window.FPUx) window.FPUx.shown(h);
     if (TOOLS) TOOLS.shown(h);
   }
+  function orient() { document.body.classList.toggle('land', window.innerWidth >= 1000 && window.innerWidth > window.innerHeight); }   // v3: landscape iPad = side rail
+  orient(); window.addEventListener('resize', orient);
   window.addEventListener('resize', function () { if (CUR === 'cockpit' && window.innerWidth < 1000) show(); });
   window.addEventListener('hashchange', show);
 
-  /* ---------- globe map + picture viewer */
-  var gh = $('globe');
-  if (gh && D.geo && window.FPGlobe) {
-    try { globe = window.FPGlobe(gh, D, { el: el, isPlan: isPlan, toMin: toMin, hm: hm, zt: zt, onFix: function (f) { if (TOOLS) TOOLS.onFix(f); }, lastTick: function () { var i = S.passed, t = i >= 0 ? S.times[i] : null; return t ? { i: i, iso: t, wpt: D.rows[i].wpt } : null; } }); window.FPGlobeAPI = globe; } catch (e) { gh.innerHTML = '<div class="msg bad">The map could not start (' + esc(e && e.message) + ').</div>'; globe = null; }
+  /* ---------- globe map + picture viewer (v3: the globe is built when the MAP page is first shown, or a moment after start) */
+  var gh = $('globe'), globeTried = false;
+  function makeGlobe() {
+    if (globe || globeTried) return; globeTried = true;
+    if (!(gh && D.geo && window.FPGlobe)) return;
+    try { globe = window.FPGlobe(gh, D, { el: el, isPlan: isPlan, toMin: toMin, hm: hm, zt: zt, wz: function (e) { return zt(toMin() + rev(e)); }, rev: rev, off: offMin, onFix: function (f) { if (TOOLS) TOOLS.onFix(f); }, lastTick: function () { var i = S.passed, t = i >= 0 ? S.times[i] : null; return t ? { i: i, iso: t, wpt: D.rows[i].wpt } : null; } }); window.FPGlobeAPI = globe; } catch (e) { gh.innerHTML = '<div class="msg bad">The map could not start (' + esc(e && e.message) + ').</div>'; globe = null; }
     document.querySelectorAll('.acts li[data-eet]').forEach(function (li) {
-      li.tabIndex = 0;
+      if (li._g) return; li._g = 1; li.tabIndex = 0;
       var go = function () { if (globe) { globe.focusAction(+li.dataset.n); var r = gh.getBoundingClientRect(); window.scrollTo({ top: window.scrollY + r.top - $('top').offsetHeight - 8, behavior: 'smooth' }); } };
       li.addEventListener('click', go); li.addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
     });
+    if (globe) tick(true);
   }
+  (window.requestIdleCallback || function (f) { setTimeout(f, 1200); })(function () { makeGlobe(); }, { timeout: 3000 });
   viewer();
 
   if (window.FPTools) try {
-    TOOLS = window.FPTools({ D: D, S: S, P: P, save: save, savePrefs: savePrefs, el: el, isPlan: isPlan, toMin: toMin, hm: hm, zt: zt, mmss: mmss, inTxt: inTxt, isoZ: isoZ, esc: esc,
+    TOOLS = window.FPTools({ D: D, S: S, P: P, save: save, savePrefs: savePrefs, el: el, elReal: elReal, isPlan: isPlan, toMin: toMin, hm: hm, zt: zt, rev: rev, off: offMin, mmss: mmss, inTxt: inTxt, isoZ: isoZ, esc: esc,
       toast: toast, ask: ask, chime: chime, tick: tick, fcLeft: fcLeft, fcReset: fcReset, fcStop: fcStop, paintWpt: paintWpt, layoutVars: layoutVars, applyTheme: applyTheme, globe: function () { return globe; },
       cur: function () { return CUR; }, seq: SEQ, name: NAME, views: views, show: show });
   } catch (x) { if (window.console) console.error('FPTools', x); }

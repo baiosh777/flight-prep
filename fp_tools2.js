@@ -22,7 +22,7 @@ window.FPTools2 = function (X) {
   var D0 = D.date ? Date.UTC(+D.date.slice(0, 4), +D.date.slice(5, 7) - 1, +D.date.slice(8, 10)) : null;
   function absTxt(m) { if (D0 == null || m == null) return ''; var d = new Date(D0 + m * 60000); return pad(d.getUTCDate()) + ' ' + MON[d.getUTCMonth()] + ' ' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + 'Z'; }
   function hz(m) { m = ((Math.round(m) % 1440) + 1440) % 1440; return pad(Math.floor(m / 60)) + pad(m % 60) + 'Z'; }
-  function etaAbs() { return A.toMin() + T; }
+  function etaAbs() { return A.toMin() + (A.rev ? A.rev(T) : T); }   // v3: revised ETA
   function altMin(icao) { var a = (D.alts || []).filter(function (x) { return x.icao === icao; })[0]; return a ? a.min : null; }
   function wxOf(icao) { return (D.wx || []).filter(function (w) { return w.icao === icao; })[0]; }
   /* the time window that matters for each airport (minutes from 00Z of the flight date) */
@@ -81,6 +81,8 @@ window.FPTools2 = function (X) {
     w.groups.slice(1).forEach(function (g) { if ((g.t === 'BECMG' && g.b <= m) || (g.t === 'FM' && g.a <= m)) cur = g; if (/TEMPO|PROB/.test(g.t) && g.a <= m && g.b > m) tmp.push(g); if (g.t === 'BECMG' && g.a <= m && g.b > m) tmp.push(g); });
     return '<p class="tafat"><b>At ' + hz(m) + ':</b> ' + esc(cur.t === 'BASE' ? w.groups[0].x : cur.t + ' ' + cur.x) + (tmp.length ? ' · <b>' + tmp.map(function (g) { return esc(g.t + ' ' + g.x); }).join(' · ') + '</b>' : '') + '</p>';
   }
+  X.wx = { focus: focus, comp: comp, sev: sev, tafSvg: tafSvg, atTxt: atTxt, absTxt: absTxt, hz: hz, etaAbs: etaAbs, altMin: altMin, wxOf: wxOf };   // v3: shared with fp_wxnt.js
+  var WN = null; try { WN = window.FPWxNt ? window.FPWxNt(X) : null; } catch (e) { if (window.console) console.error('FPWxNt', e); }
   var wxRole = 'arr';
   function wxHtml() {
     var R = { arr: ['DEST', 'ALTN'], etops: ['ETOPS'], dep: ['DEP'], enr: ['ENR'] }[wxRole];
@@ -99,7 +101,7 @@ window.FPTools2 = function (X) {
   /* ---------- NOTAMs at ETA */
   var ntRole = 'DEST', ntAll = false;
   function ntWin(n) {
-    if (n.role === 'DEST' || n.role === 'ALTN' || n.role === 'ETOPS') { var fo = focus({ role: n.role, icao: n.icao }); var c = fo.at2 != null ? [fo.at, fo.at2] : [fo.at, fo.at]; return [c[0] - 60, c[1] + 60]; }
+    if (n.role === 'DEP' || n.role === 'DEST' || n.role === 'ALTN' || n.role === 'ETOPS') { var fo = focus({ role: n.role, icao: n.icao }); var c = fo.at2 != null ? [fo.at, fo.at2] : [fo.at, fo.at]; return [c[0] - 60, c[1] + 60]; }
     var f = D.firs.filter(function (x) { return x.fir === n.fir; })[0], nx = f ? D.firs[D.firs.indexOf(f) + 1] : null; if (!f) return null;
     return [A.toMin() + f.eet_min, A.toMin() + (nx ? nx.eet_min : T)];
   }
@@ -107,7 +109,7 @@ window.FPTools2 = function (X) {
   function ntHtml() {
     var all = ntRole === 'ENR' ? (D.rnotams || []).map(function (n) { return Object.assign({ role: 'ENR', icao: n.fir, cat: n.kind.toUpperCase() }, n); }) : (D.notams || []).filter(function (n) { return n.role === ntRole; });
     var shown = ntAll ? all : all.filter(act0);
-    var s = '<div class="seg">' + [['DEST', 'Destination'], ['ALTN', 'Alternates'], ['ETOPS', 'ETOPS'], ['ENR', 'En route']].map(function (t) { var c = (t[0] === 'ENR' ? (D.rnotams || []).map(function (n) { return Object.assign({ role: 'ENR' }, n); }) : (D.notams || []).filter(function (n) { return n.role === t[0]; })); return '<button type="button" data-act="ntr" data-r="' + t[0] + '" class="' + (ntRole === t[0] ? 'on' : '') + '">' + t[1] + ' <small>' + c.filter(act0).length + '/' + c.length + '</small></button>'; }).join('') +
+    var s = '<div class="seg">' + [['DEP', 'Departure'], ['DEST', 'Destination'], ['ALTN', 'Alternates'], ['ETOPS', 'ETOPS'], ['ENR', 'En route']].map(function (t) { var c = (t[0] === 'ENR' ? (D.rnotams || []).map(function (n) { return Object.assign({ role: 'ENR' }, n); }) : (D.notams || []).filter(function (n) { return n.role === t[0]; })); return '<button type="button" data-act="ntr" data-r="' + t[0] + '" class="' + (ntRole === t[0] ? 'on' : '') + '">' + t[1] + ' <small>' + c.filter(act0).length + '/' + c.length + '</small></button>'; }).join('') +
       '<button type="button" data-act="nta" class="' + (ntAll ? 'on' : '') + '">' + (ntAll ? 'Showing all' : 'Active at my time only') + '</button></div>';
     if (!shown.length) return s + '<p class="note">' + (all.length ? 'None active in the window (' + all.length + ' in the OFP – tap “Active at my time only” to show all).' : 'No NOTAMs of this group in the OFP.') + '</p>';
     var w0 = shown.length ? ntWin(shown[0]) : null;
@@ -313,6 +315,7 @@ window.FPTools2 = function (X) {
         : '<p class="note">This flight file has no MEL text. Text you type is yours – check it against the MEL / dispatch release.</p>');
   }
   X.melFind = melFind;
+  window.FPMelFind = melFind;   // v3.3: DASH strip and other pages look items up in the MEL library
   function melAfter(b) {
     if (b._mel) return; b._mel = 1;
     b.addEventListener('input', function (e) {
@@ -393,9 +396,12 @@ window.FPTools2 = function (X) {
     else if (k === 'menu') X.openSheet('menu', 'Tools', menuHtml);
   }
   window.FPTools2Open = open;
+  window.FPRerender = X.rerender;   // v3.3: used after a live weather refresh
   var tb = $('b-tools'); if (tb) tb.addEventListener('click', function () { open('menu'); });
   function act(b, ev) {
     var a = b.dataset.act; ev.preventDefault();
+    if (a.indexOf('wn-') === 0) { if (WN) WN.act(b); return; }
+    if (a.indexOf('rg-') === 0) { if (window.FPRegs) window.FPRegs.act(b); return; }
     if (a === 'open') open(b.dataset.k);
     else if (a === 'wxr') { wxRole = b.dataset.r; X.rerender(); }
     else if (a === 'ntr') { ntRole = b.dataset.r; X.rerender(); } else if (a === 'nta') { ntAll = !ntAll; X.rerender(); }
@@ -408,5 +414,5 @@ window.FPTools2 = function (X) {
     else if (a === 'melp') { var pf = melFind(b.dataset.no); if (!S.mel.some(function (m) { return melNorm(m.no) === melNorm(b.dataset.no); })) { S.mel.push({ no: melNorm(b.dataset.no), title: pf ? pf.t : '', note: '' }); A.save(); A.tick(true); } melOpen = ''; X.rerender(); }
     else if (a === 'meld') { S.mel.splice(+b.dataset.i, 1); A.save(); A.tick(true); X.rerender(); }
   }
-  return { act: act, cards: cards, tick: function () { }, shown: function () { } };
+  return { act: act, cards: cards, tick: function () { }, shown: function () { }, wxnt: function () { if (WN) WN.render(); }, wn: WN };
 };

@@ -88,7 +88,8 @@ window.FPGlobe = function (host, D, L) {
   var NA = (D.nareas || []).map(function (q) { return { q: q, geo: q.pts.map(function (p) { return d3.geoCircle().center([p[1], p[0]]).radius(q.r_nm / 60).precision(4)(); }) }; });
   var ESC = D.chain.filter(function (c) { return /escape/i.test(c.note); }).map(function (c) { var a = null; G.apt.forEach(function (x) { if (x.icao === c.icao) a = x; }); return a ? { c: c, a: a } : null; }).filter(Boolean);
   var TERR = null;   // terrain texture (fp_terrain.js: window.FP_TERRAIN = data URI of an equirectangular grey shaded-relief image)
-  if (window.FP_TERRAIN) { var ti = new Image(); ti.onload = function () { var cc = document.createElement('canvas'); cc.width = ti.width; cc.height = ti.height; var g2 = cc.getContext('2d'); g2.drawImage(ti, 0, 0); var rgba = g2.getImageData(0, 0, ti.width, ti.height).data, one = new Uint8Array(ti.width * ti.height); for (var q = 0; q < one.length; q++) one[q] = rgba[q * 4]; TERR = { w: ti.width, h: ti.height, d: one }; cc.width = cc.height = 1; SKEY = ''; req(); }; ti.src = window.FP_TERRAIN; }
+  var terrLoading = false;
+  function loadTerrain() { if (TERR || terrLoading || !window.FP_TERRAIN) return; terrLoading = true; var ti = new Image(); ti.onload = function () { var cc = document.createElement('canvas'); cc.width = ti.width; cc.height = ti.height; var g2 = cc.getContext('2d'); g2.drawImage(ti, 0, 0); var rgba = g2.getImageData(0, 0, ti.width, ti.height).data, one = new Uint8Array(ti.width * ti.height); for (var q = 0; q < one.length; q++) one[q] = rgba[q * 4]; TERR = { w: ti.width, h: ti.height, d: one }; cc.width = cc.height = 1; SKEY = ''; req(); }; ti.src = window.FP_TERRAIN; }   // v3: decoded when the map is first shown, not at start
   if (!NZ.length && !NA.length) delete LAY.ncz; if (!ESC.length) delete LAY.esc; if (!window.FP_TERRAIN) delete LAY.terr;
   if (!IF) delete LAY.ifbp; if (!SL) delete LAY.slop; if (!CP) delete LAY.cpdlc;
   var EXCL = ['slop', 'cpdlc', 'ifbp'];   // route overlays: one at a time so the colours stay readable
@@ -172,8 +173,9 @@ window.FPGlobe = function (host, D, L) {
     if (e < 0) { tb.textContent = 'On ground'; ts.textContent = 'T/O in ' + hm(Math.ceil(-e)) + ' · ' + (plan ? 'planned T/O ' : 'T/O ') + zt(toM); }
     else if (e > T) { tb.textContent = 'Landed (planned)'; ts.textContent = RT[RT.length - 1].n + ' ' + zt(toM + T); }
     else {
-      tb.textContent = (mode === 'live' ? '' : 'PREVIEW ') + '+' + hm(e) + ' · ' + zt(toM + e);
-      ts.textContent = a.n + ' ' + hm(a.e) + ' → ' + b.n + ' ' + hm(b.e) + ' · ' + Math.round(CUM[CUM.length - 1] - distAt(eC)).toLocaleString('en-GB') + ' NM to go' + (inIfbp(eC) ? ' · IFBP 126.9' : '') + (plan && mode === 'live' ? ' · no T/O set (planned)' : '');
+      var of_ = mode === 'live' && L.off ? L.off() : 0;   // v3: the clock shows real time; waypoint times are the revised estimates (Z)
+      tb.textContent = (mode === 'live' ? '' : 'PREVIEW ') + zt(toM + e + of_) + ' · +' + hm(e + of_) + (Math.round(of_) ? ' · ' + (of_ > 0 ? '+' : '−') + Math.abs(Math.round(of_)) + ' min on the plan' : '');
+      ts.textContent = a.n + ' ' + (L.wz ? L.wz(a.e) : hm(a.e)) + ' → ' + b.n + ' ' + (L.wz ? L.wz(b.e) : hm(b.e)) + ' · ' + Math.round(CUM[CUM.length - 1] - distAt(eC)).toLocaleString('en-GB') + ' NM to go' + (inIfbp(eC) ? ' · IFBP 126.9' : '') + (plan && mode === 'live' ? ' · no T/O set (planned)' : '');
     }
     gg.hidden = !GPS.on; if (GPS.on) { var gf = gpsFix(); gg.textContent = gf ? 'GPS ' + gpsLine(gf) + ' · ' + xcheck(gf) : 'GPS: ' + (GPS.msg || 'no recent fix') + ' – elapsed time stays the reference'; }
     badge.textContent = GPS.on ? '✈ magenta = elapsed-time position · cyan = iPad GPS (cross-check)' : '✈ = elapsed-time position (OFP EET + your T/O) · not GPS';
@@ -564,8 +566,8 @@ window.FPGlobe = function (host, D, L) {
         if (q.w < q.a) { x.beginPath(); path(subLine(q.w, q.a)); x.strokeStyle = cy; x.globalAlpha = 0.2; x.lineWidth = 20; x.stroke(); }
         x.beginPath(); path(subLine(q.a, q.b)); x.strokeStyle = cy; x.globalAlpha = 0.38; x.lineWidth = 20; x.stroke(); x.globalAlpha = 1;
         for (var t = q.w; t <= q.b; t += 3) { var ll = posAt(t); if (!vis(ll)) continue; var pt = proj(ll); if (onScreen(pt)) HITS.push({ x: pt[0], y: pt[1], r: 0, lo: 1, html: ifbpHtml }); }
-        var mid = posAt((q.a + q.b) / 2); if (vis(mid)) { var mp = proj(mid); if (onScreen(mp)) label('IFBP 126.9 · ' + hm(q.a) + '–' + hm(q.b), mp, { pri: 8, box: cy, col: '#06222c', font: '800 11px ' + c.font, size: 12, off: 16 }); }
-        if (q.w < q.a) { var wl = posAt(q.w); if (vis(wl)) { var wp = proj(wl); if (onScreen(wp)) label('IFBP listen ' + hm(q.w), wp, { pri: 7, col: cy, font: '800 11px ' + c.font, size: 12, off: 12 }); } }
+        var mid = posAt((q.a + q.b) / 2); if (vis(mid)) { var mp = proj(mid); if (onScreen(mp)) label('IFBP 126.9 · ' + (L.wz ? L.wz(q.a) + '–' + L.wz(q.b) : hm(q.a) + '–' + hm(q.b)), mp, { pri: 8, box: cy, col: '#06222c', font: '800 11px ' + c.font, size: 12, off: 16 }); }
+        if (q.w < q.a) { var wl = posAt(q.w); if (vis(wl)) { var wp = proj(wl); if (onScreen(wp)) label('IFBP listen ' + (L.wz ? L.wz(q.w) : hm(q.w)), wp, { pri: 7, col: cy, font: '800 11px ' + c.font, size: 12, off: 12 }); } }
       });
     }
     if (SL && lay.slop) {
@@ -592,7 +594,7 @@ window.FPGlobe = function (host, D, L) {
           var dl = posAt(q.dl); if (vis(dl)) { var dp = proj(dl); if (onScreen(dp)) {
             x.beginPath(); x.moveTo(dp[0], dp[1] - 8); x.lineTo(dp[0] + 8, dp[1]); x.lineTo(dp[0], dp[1] + 8); x.lineTo(dp[0] - 8, dp[1]); x.closePath(); x.fillStyle = VIO; x.fill(); x.strokeStyle = c.halo; x.lineWidth = 1.4; x.stroke();
             HITS.push({ x: dp[0], y: dp[1], r: 7, key: key, html: function () { return cpdlcHtml(q); } });
-            label('logon ' + q.addr + ' by ' + hm(q.dl), dp, { pri: 9, col: VIO, font: '800 12px ' + c.font, size: 13, off: 11 }); } }
+            label('logon ' + q.addr + ' by ' + (L.wz ? L.wz(q.dl) : hm(q.dl)), dp, { pri: 9, col: VIO, font: '800 12px ' + c.font, size: 13, off: 11 }); } }
         }
       });
     }
@@ -629,7 +631,7 @@ window.FPGlobe = function (host, D, L) {
       var ll = [w.lon, w.lat]; if (!vis(ll)) return; var p = proj(ll); if (!onScreen(p)) return;
       tri(p, w.m ? 5.5 : 4); x.fillStyle = c.route; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke(); SWP.push({ p: p, s: w.m ? 5.5 : 4, e: w.e });
       HITS.push({ x: p[0], y: p[1], r: w.m ? 4 : -14, html: function () { return wptHtml(w); } });
-      if (lay.wpt && (w.m || huge)) label(w.n + (w.m ? ' ' + hm(w.e) : ''), p, { pri: w.m ? 6 : 3, font: (w.m ? '700 12px ' : '500 11px ') + c.font, size: w.m ? 13 : 12 });
+      if (lay.wpt && (w.m || huge)) label(w.n + (w.m ? ' ' + (L.wz ? L.wz(w.e) : hm(w.e)) : ''), p, { pri: w.m ? 6 : 3, font: (w.m ? '700 12px ' : '500 11px ') + c.font, size: w.m ? 13 : 12 });
       if (lay.wpt && w.m && w.note && huge) label(w.note, [p[0], p[1] + 14], { pri: 2, col: c.muted, font: 'italic 500 11px ' + c.font, size: 12 });
     });
     // FIR entries along the route
@@ -637,7 +639,7 @@ window.FPGlobe = function (host, D, L) {
       if (!f.eet_min) return; var ll = posAt(f.eet_min); if (!vis(ll)) return; var p = proj(ll); if (!onScreen(p)) return;
       x.beginPath(); x.arc(p[0], p[1], 6.5, 0, 2 * PI); x.strokeStyle = c.fir; x.lineWidth = 2; x.stroke();
       HITS.push({ x: p[0], y: p[1], r: 6, html: function () { return '<b class="gph">FIR entry ' + esc(f.fir) + ' ' + esc(f.name) + '</b><div>EET ' + tz(f.eet_min) + ' (FPL EET)</div>'; } });
-      if (lay.fir) label('▶ ' + f.fir + ' ' + hm(f.eet_min), p, { pri: 5, col: c.fir, font: '700 11px ' + c.font, size: 12, off: 10 });
+      if (lay.fir) label('▶ ' + f.fir + ' ' + (L.wz ? L.wz(f.eet_min) : hm(f.eet_min)), p, { pri: 5, col: c.fir, font: '700 11px ' + c.font, size: 12, off: 10 });
     });
     // airports
     if (lay.apt) G.apt.forEach(function (a) {
@@ -701,7 +703,7 @@ window.FPGlobe = function (host, D, L) {
       x.beginPath(); x.arc(p[0], p[1], 19, 0, 2 * PI); x.fillStyle = c.mag; x.globalAlpha = 0.2; x.fill(); x.globalAlpha = 1;
       if (PLANE) { x.save(); x.translate(p[0], p[1]); x.rotate(ang); x.scale(1.2, 1.2); x.fillStyle = c.mag; x.fill(PLANE); x.lineWidth = 1.3; x.strokeStyle = c.halo; x.stroke(PLANE); x.restore(); }
       HITS.push({ x: p[0], y: p[1], r: 14, html: planeHtml });
-      label((mode === 'live' ? '✈ ' : '✈ PREVIEW ') + (e < 0 ? 'on ground' : (e > T ? 'landed' : '+' + hm(eC) + ' · ' + zt(L.toMin() + eC))), p, { pri: 100, box: c.mag, col: '#1a0718', font: '800 12px ' + c.font, size: 13, off: 20 });
+      label((mode === 'live' ? '✈ ' : '✈ PREVIEW ') + (e < 0 ? 'on ground' : (e > T ? 'landed' : zt(L.toMin() + eC + (L.off ? L.off() : 0)) + ' · +' + hm(eC + (L.off ? L.off() : 0)))), p, { pri: 100, box: c.mag, col: '#1a0718', font: '800 12px ' + c.font, size: 13, off: 20 });
     }
     var gf = gpsFix();
     if (gf && vis([gf.lon, gf.lat])) {
@@ -733,7 +735,7 @@ window.FPGlobe = function (host, D, L) {
     h += '<polyline class="plv" points="' + PR.pts.map(function (q) { return px(q[0]) + ',' + py(q[1]); }).join(' ') + '"/>';
     var lastX = -99;
     RT.forEach(function (w, i) { if (!w.m && i !== 0 && i !== RT.length - 1) return; var xx = px(w.e); h += '<line x1="' + xx + '" x2="' + xx + '" y1="' + PY0 + '" y2="' + (PY0 + 7) + '" class="ptk"/>';
-      if (xx - lastX > 34) { h += '<text x="' + xx + '" y="' + (PY0 + 18) + '" class="ptx c">' + esc(w.n) + '</text><text x="' + xx + '" y="' + (PY0 + 29) + '" class="ptx c m">' + hm(w.e) + '</text>'; lastX = xx; } });
+      if (xx - lastX > 34) { h += '<text x="' + xx + '" y="' + (PY0 + 18) + '" class="ptx c">' + esc(w.n) + '</text><text x="' + xx + '" y="' + (PY0 + 29) + '" class="ptx c m">' + (L.wz ? L.wz(w.e) : hm(w.e)) + '</text>'; lastX = xx; } });
     h += '<line class="pnow" x1="0" x2="0" y1="' + PY1 + '" y2="' + PY0 + '"/><g class="pgps" style="display:none"><circle r="7"/></g>' +
       '<g class="pac"><circle r="13" class="pah"/><path d="M0,-15C1.7,-15 2.2,-12 2.2,-9.5L2.2,-3.5L14,3L14,6L2.2,2.6L2.2,9L5.5,12L5.5,14.2L0,12.8L-5.5,14.2L-5.5,12L-2.2,9L-2.2,2.6L-14,6L-14,3L-2.2,-3.5L-2.2,-9.5C-2.2,-12 -1.7,-15 0,-15Z" transform="rotate(90) scale(0.85)"/></g>';
     PV.innerHTML = h;
@@ -769,7 +771,7 @@ window.FPGlobe = function (host, D, L) {
   try { if (localStorage.getItem('fpapp:gps') === '1') gpsSet(true); } catch (e) { }
   return {
     tick: function () { if (!visible()) return; if (mode === 'live') { if (follow) centerPlane(false); updBar(); } refreshPop(false); req(); },
-    shown: function () { size(); updBar(); req(); },
+    shown: function () { loadTerrain(); size(); updBar(); req(); },
     restyle: function () { C = null; themeVer++; req(); },
     focusAction: focusAction,
     _bench: function (n, move) { var t0 = performance.now(); for (var i = 0; i < (n || 10); i++) { if (move) rot = [rot[0] + 0.3, rot[1], 0]; draw(); } return (performance.now() - t0) / (n || 10); },

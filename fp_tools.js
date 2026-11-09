@@ -8,7 +8,7 @@ window.FPTools = function (A) {
   function $(id) { return document.getElementById(id); }
   function on(id, ev, fn) { var x = $(id); if (x) x.addEventListener(ev, fn); }
   function pad(n) { return String(n).padStart(2, '0'); }
-  function zt(e) { return A.zt(A.toMin() + e); }                      // EET -> UTC 'HHMMZ'
+  function zt(e) { return A.zt(A.toMin() + (A.rev ? A.rev(e) : e)); }   // planned EET -> UTC 'HHMMZ' (revised by the actual time over the last waypoint, v3)
   function eAbs(m) { return m - A.toMin(); }                            // minutes from 00Z of the flight date -> EET
   function eUtc(hhmm) { var s = String(hhmm || '').replace(/\D/g, ''); if (s.length < 3) return null; var m = +s.slice(0, -2) * 60 + +s.slice(-2); var x = ((m - A.toMin()) % 1440 + 1440) % 1440; return x > 720 ? x - 1440 : x; }
   function cd(d) { return d < 0 ? '-' + hm(Math.ceil(-d)) : hm(Math.ceil(d)); }
@@ -27,10 +27,11 @@ window.FPTools = function (A) {
     opt = opt || {}; sheet = { kind: kind, render: render, tick: opt.tick, title: title };
     $('sheet-t').textContent = title; SH.classList.toggle('wide', !!opt.wide); SH.hidden = false; BG.hidden = false;
     SB.innerHTML = render(); SB.scrollTop = 0; document.documentElement.classList.add('noscroll');
+    if (window.FPRefs && kind !== 'ref' && kind !== 'search' && kind !== 'help') window.FPRefs.scan(SB);   // v3: document references in the cards
     if (opt.after) opt.after(SB);
     var f = SB.querySelector('[autofocus]'); if (f) setTimeout(function () { f.focus(); }, 60);
   }
-  function rerender() { if (!sheet) return; var y = SB.scrollTop, op = [].map.call(SB.querySelectorAll('details[data-icao][open]'), function (d) { return d.dataset.icao; }); SB.innerHTML = sheet.render(); op.forEach(function (ic) { var d = SB.querySelector('details[data-icao="' + ic + '"]'); if (d) d.open = true; }); SB.scrollTop = y; }
+  function rerender() { if (!sheet) return; var y = SB.scrollTop, op = [].map.call(SB.querySelectorAll('details[data-icao][open]'), function (d) { return d.dataset.icao; }); SB.innerHTML = sheet.render(); if (window.FPRefs && sheet.kind !== 'ref' && sheet.kind !== 'search') window.FPRefs.scan(SB); op.forEach(function (ic) { var d = SB.querySelector('details[data-icao="' + ic + '"]'); if (d) d.open = true; }); SB.scrollTop = y; }
   function closeSheet() { SH.hidden = true; BG.hidden = true; sheet = null; document.documentElement.classList.remove('noscroll'); }
   X.openSheet = openSheet; X.closeSheet = closeSheet; X.rerender = rerender;
   on('sheet-x', 'click', closeSheet); on('sheet-bg', 'click', closeSheet);
@@ -390,6 +391,7 @@ window.FPTools = function (A) {
   /* ---------- search everything */
   var IDX = null;
   function buildIdx() {
+    if (window.FPMount && window.FPMount.ensureAll) window.FPMount.ensureAll();   // v3: pages not shown yet are mounted for the index
     IDX = [];
     Object.keys(A.views).forEach(function (v) {
       if (v === 'flights') return; var nm = A.name[v] || v.toUpperCase();
@@ -424,6 +426,50 @@ window.FPTools = function (A) {
     openSheet('search', 'Search the pack', srHtml, { after: function (b) { var i = b.querySelector('#sq'), t = null; i.addEventListener('input', function () { clearTimeout(t); t = setTimeout(function () { lastQ = i.value; b.querySelector('#sr').innerHTML = results(lastQ); }, 120); }); } });
   }
   on('b-search', 'click', openSearch);
+
+  /* ---------- v3: reference card (fp_refs.js) - where a reference lives, the matching text captured in this flight file, open the document */
+  var DL = D.doclinks || {};
+  function refPage(doc, ref) {   // page hint from the flight file: doclinks.docs[key].pages = {'3.139': 5066, ...} (longest matching chapter prefix)
+    var pg = doc && doc.pages ? doc.pages : null; if (!pg) return null; var num = (/\d+(?:\.\d+)*/.exec(ref) || [''])[0], best = null, bl = -1;
+    Object.keys(pg).forEach(function (k) { if ((num + '.').indexOf(k + '.') === 0 && k.length > bl) { bl = k.length; best = k; } });
+    return best ? { ch: best, page: pg[best] } : null;
+  }
+  function refOffline(r) {   // text in this flight file that carries the reference
+    var out = [], q = r.ref.replace(/^Lido\s+/i, ''), num = (/\d+(?:[.-]\d+)*[A-Za-z]?/.exec(q) || [''])[0];
+    if (/^(AOI|CCI|AFC|AGC|APC|IAC|SID|STAR)/i.test(q) && D.aptinfo) {
+      var ai = D.aptinfo[r.icao]; if (ai && ai.pages) ai.pages.forEach(function (p) {
+        var title = p[0], hit = num && (title.indexOf(num) === 0 || title.indexOf(' ' + num) >= 0);
+        if (!hit && /^(AOI|CCI)/i.test(q) && new RegExp('\\b' + q.split(/\s+/)[0] + '\\b', 'i').test(title) && !num) hit = true;
+        if (hit) out.push({ t: r.icao + ' · ' + title, x: p[1].slice(0, 1800) + (p[1].length > 1800 ? ' …' : ''), src: ai.src });
+      });
+      if (!out.length && ai && ai.pages && num) ai.pages.forEach(function (p) { var i = p[1].indexOf(num); if (i >= 0 && /^(AOI|CCI)/i.test(q)) out.push({ t: r.icao + ' · ' + p[0], x: '… ' + p[1].slice(Math.max(0, i - 200), i + 900) + ' …', src: ai.src }); });
+    }
+    if (/^(RSI|CRAR|GEN|RM)/i.test(q) && D.firproc) Object.keys(D.firproc).forEach(function (fir) { var P = D.firproc[fir]; Object.keys(P).forEach(function (k) { var x = P[k]; if (typeof x === 'string' && num && x.indexOf(num) >= 0) { var i = x.indexOf(num); out.push({ t: fir + ' · ' + k, x: '… ' + x.slice(Math.max(0, i - 150), i + 900) + ' …', src: D.firproc_src || '' }); } }); });
+    if (/^(CC|CO|[A-Z]{1,2}\d{3,5}\/)/.test(q)) { var id = q.replace(/\s+/g, ''); (D.notams || []).concat((D.rnotams || []).map(function (n) { return Object.assign({ icao: n.fir }, n); })).forEach(function (n) { if (n.id === id || n.id.indexOf(id) === 0) out.push({ t: n.icao + ' · ' + n.id, x: n.x, src: 'OFP NOTAM bulletin' }); }); (D.crew_alert || []).forEach(function (c) { if (c.id === id || c.id.indexOf(id) === 0) out.push({ t: c.id + ' · ' + (c.title || ''), x: c.x, src: 'OFP crew alert' }); }); }
+    return out.slice(0, 4);
+  }
+  function refHtml(r) {
+    var key = r.k, doc = r.doc || ['Document', ''], dk = doc[1], cfg = DL.docs && (DL.docs[dk] || DL.docs[key.toLowerCase()]) || null, pg = refPage(cfg, r.ref), off = refOffline(r);
+    var h = '<div class="refh"><b>' + esc(r.ref) + '</b><span>' + esc(cfg && cfg.title || doc[0]) + (/^(AOI|CCI|AFC|AGC|APC|IAC|SID|STAR)$/.test(key) && r.icao ? ' · ' + esc(r.icao) : '') + '</span></div>';
+    if (pg) h += '<p class="refw">Chapter ' + esc(pg.ch) + (cfg.name ? ' of ' + esc(cfg.name) : '') + ' starts on <b>page ' + esc(pg.page) + '</b>' + (cfg.rev ? ' <small>(' + esc(cfg.rev) + ')</small>' : '') + '.</p>';
+    else if (cfg && cfg.hint) h += '<p class="refw">' + esc(cfg.hint) + '</p>';
+    var btns = '';
+    function openBtn(u, lab, cls) { return u ? '<a class="refb ' + (cls || '') + '" href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(lab) + '</a>' : ''; }
+    var url = cfg && cfg.url ? cfg.url : null; if (url && pg && cfg.pageUrl) url = cfg.pageUrl.replace('{page}', pg.page);
+    if (url) btns += openBtn(url, 'Open ' + (cfg.app || 'the document'), 'pri');
+    if (/^(AOI|CCI|AFC|AGC|APC|IAC|SID|STAR)$/.test(key) && DL.charts && DL.charts.url) btns += openBtn(DL.charts.url.replace('{icao}', r.icao || ''), 'Open ' + (DL.charts.title || 'the charts app'), url ? '' : 'pri');
+    if (DL.portal && DL.portal.url && (!url || url !== DL.portal.url)) btns += openBtn(DL.portal.url, 'Open ' + (DL.portal.title || 'DocuNet'), btns ? '' : 'pri');
+    if ((key === 'MEL' || key === 'CDL') && D.mel) { var mno = (/\d{2}-\d{2}-\d{2}(?:-\d{2})?[A-Z]?/.exec(r.ref) || [''])[0]; if (mno) btns = '<button type="button" class="refb pri" data-act="melv" data-no="' + esc(mno) + '">Open MEL ' + esc(mno) + ' in the app</button>' + btns.replace(' pri', ''); }
+    if (key === 'NOTAM' && $('v-wxnotam')) btns = '<a class="refb pri" href="#wxnotam">Open the WX · NOTAM page</a>' + btns.replace(' pri', '');
+    btns += '<button type="button" class="refb" data-act="x-refcopy" data-t="' + esc(r.ref + (pg ? ' – page ' + pg.page : '')) + '">Copy reference</button>';
+    h += '<div class="refbs">' + btns + '</div>';
+    if (!DL.docs && !DL.portal) h += '<p class="note">No document links in this flight file yet – open ' + esc(doc[0]) + ' yourself' + (pg ? ' at page ' + pg.page : '') + '.</p>';
+    if (off.length) h += '<h3 class="shh">In this flight file</h3>' + off.map(function (o) { return '<div class="refo"><b>' + esc(o.t) + '</b><p>' + esc(o.x) + '</p><small>' + esc(o.src) + '</small></div>'; }).join('');
+    else h += '<p class="note">No captured text for this reference in the flight file.</p>';
+    return h;
+  }
+  window.FPOpenRef = function (r) { openSheet('ref', 'Reference', function () { return refHtml(r); }); };
+  window.FPSheet = function (kind, title, html) { openSheet(kind, title, function () { return html; }); };   // v3.1: simple sheets for the UX layer
   function searchGo(i) {
     var x = RES[i]; if (!x) return; closeSheet();
     if (x.v.charAt(0) === '#') { if (window.FPTools2Open) window.FPTools2Open(x.v.slice(1), x); return; }
@@ -432,23 +478,33 @@ window.FPTools = function (A) {
 
   /* ---------- help tips per page */
   var HELP = {
-    _top: [['ELAPSED · ETA', 'Time since T/O and the planned landing time (UTC and local) from the OFP trip time. Tap ELAPSED to go to DASH, where the take-off time is entered once.', '.el'],
+    dash: [['Airfields now', 'Weather at your time and active NOTAMs per airfield; tap a tile for the WX · NOTAM page.', '#dash-air'], ['Briefing progress', 'One tile per preparation page with its key line; mark a page as briefed at its end and the tile turns green.', '#dash-brief']],
+    _top: [['Two groups of pages', 'PREPARATION: DASH, DEP, WX · NOTAM, TEM, ARR, REGS. IN FLIGHT: NOW, WPTS, MAP, TIMERS, DIVERT. In landscape they sit in the rail on the left.', '#tabs'],
+      ['ELAPSED · ETA', 'Time since T/O and the revised landing time (UTC and local): the OFP trip time, corrected by the actual time over your last waypoint (the LATE / EARLY chip). Tap ELAPSED to go to DASH, where the take-off time is entered once.', '.el'],
       ['Timer chips', 'Running timers (fuel check, crew check, weather update ...) with their countdown; amber near the end, red when due. Tap = Timers (start / done / stop).', '#tmx'],
       ['NOW', 'The overview page: next action, status strip, Up next, cards.', '#nowbtn'], ['Search · Timers · Split · Help', 'Search the whole pack, your own timers, NOW + map side by side (landscape), this help.', '.tools'],
       ['Settings', 'Text size, theme (auto / dark / night / light), dimmer, screen on, sound, swipe, auto-tick by GPS, self-test.', '#set-btn']],
     now: [['Next action', 'The next thing due, with its countdown. Calls, fuel check and IFBP broadcast have a Done button.', '#nextaction'], ['Status strip', 'Phase and level, FIR, comms (tap for the big frequency board), CPDLC, SLOP, IFBP, GPS cross-check, day/night.', '#nowstrip'],
       ['Up next', 'Everything coming: calls, waypoints, FIR entries, level changes, ETOPS, timers, ground and arrival items.', '#upnext'], ['Cards', 'Fuel check, IFBP, ETOPS, step climb, TOD, 1-hour airports, ETA, MORA, timers and pinned items.', '#nowcards'],
       ['Timeline', 'The whole flight: FIRs, ETOPS (amber), calls (dots), events (ticks) and now (magenta).', '#timeline']],
-    waypoints: [['Tap a row', 'Tick a waypoint when you pass it; tap a ticked row to step back. Auto-tick by GPS can do it for you (Settings).', '#wpt'], ['Comms column', 'VHF in order of use, HF with the day/night set highlighted, CPDLC, call deadlines with Done. Tap a frequency for the big board.', '#wpt thead'],
+    waypoints: [['Cards or table', 'Cards: one card per leg, the next one open with its frequencies in large type; the ring on the left = passed. Table: the full comms table. The choice is remembered.', '#wpt-view'],
+      ['Tap a row', 'Tick a waypoint when you pass it; tap a ticked row to step back. Auto-tick by GPS can do it for you (Settings).', '#wpt'], ['Comms column', 'VHF in order of use, HF with the day/night set highlighted, CPDLC, call deadlines with Done. Tap a frequency for the big board.', '#wpt thead'],
       ['Colours', 'Magenta = next, green = passed, amber DUE = planned time passed, MORA amber > 5000 ft, red > 10000 ft.', '.wptbar']],
     'route-map': [['Globe', 'Drag to turn, pinch or double-tap to zoom, tap a symbol for details; tap a band (SLOP, CPDLC, IFBP) to open, tap again to close.', '#globe'], ['Layers', 'Chips below the map switch layers: night shadow, terrain, NOTAM / conflict areas, escape airports and more.', '.glay'],
       ['Side view', 'MORA and planned levels with the moving aircraft; RETURN / AHEAD show the nearest 1-hour airports.', '.gprof'], ['LIVE / slider', 'LIVE follows the time; drag the slider to preview any time of the flight.', '.gbar']],
     _pack: [['Press and hold', 'Press and hold a paragraph to highlight it or pin it to NOW.', 'main'], ['Swipe', 'Swipe left / right to go to the next / previous page (switch off in Settings).', 'main'], ['Pictures', 'Tap a chart for the full-screen viewer (pinch, double-tap, Fit).', 'main']],
-    cockpit: [['Split cockpit view', 'NOW on the left, map and side view on the right. Tap NOW or any page to leave; available in landscape.', '#b-split']]
+    cockpit: [['Split cockpit view', 'NOW on the left, map and side view on the right. Tap NOW or any page to leave; available in landscape.', '#b-split']],
+    wxnotam: [['Airfield tiles', 'One tile per airfield: weather colour from the TAF at your time there (OK / CHECK / POOR, simple decode) and the active NOTAMs (red = runway / ILS / GPS, amber = taxiways / navaids / lights). Tap a tile to jump to that airfield.', '.wtiles'],
+      ['NOTAM badges', 'NEW = started within 7 days of the flight (or new since the last OFP of DXB), SHORT = valid 72 h or less, CRITICAL / IMPORTANT from key words, NOT AT YOUR TIME = outside your window there.', '.wnl'],
+      ['Pin · read', 'Pin keeps a NOTAM at the top; the tick greys it out as read. Both stay on this iPad for this flight. Filters: airfield group, important only, active at my time, sort.', '.wnf']],
+    regs: [['Search', 'Country name, ICAO prefix (OO, VABF, OMDB), region or chapter number. The countries of this flight come first.', '#rg-q'],
+      ['Country card', 'In short = summary (Claude\'s, from the Lido text) or key sentences picked by rule; below it every section of the Lido chapter, tap to open. The Lido text is the authority.', '.rglist']],
+    _refs: [['Dotted references', 'Dotted blue references (CRAR 3.139, RSI 2.7.5.8, AOI 3.3, OM-A 8.5, CC54 ...) open a card: document, chapter and page, the text captured in this flight file, and buttons to open DocuNet / the charts app.', '.refl']],
+    _ato: [['Time over a waypoint', 'In WAYPOINTS tap a row when you pass it, or tap "time" to type the actual time over (HHMM). Every later time is then revised by the delay or advance: the table shows "rev", the map shows the revised Z times, ETA and the Up-next list follow.', '.atob']]
   };
   var COLORS = '<div class="hcol"><span><i style="background:var(--mag)"></i>next / active</span><span><i style="background:var(--grn)"></i>done</span><span><i style="background:var(--amb)"></i>due / caution</span><span><i style="background:var(--red)"></i>overdue / warning</span><span><i style="background:var(--cyan)"></i>interactive · GPS · IFBP</span><span><i style="background:#8f7cf0"></i>CPDLC</span></div>';
   function helpHtml() {
-    var v = A.cur(), list = (HELP[v] || []).concat(v === 'cockpit' ? HELP.now : []).concat(['now', 'waypoints', 'route-map', 'cockpit', 'flights'].indexOf(v) < 0 ? HELP._pack : []);
+    var v = A.cur(), list = (HELP[v] || []).concat(v === 'cockpit' ? HELP.now : []).concat(['now', 'waypoints', 'route-map', 'cockpit', 'flights', 'wxnotam', 'regs'].indexOf(v) < 0 ? HELP._pack.concat(HELP._refs) : []).concat(v === 'waypoints' ? HELP._ato : []);
     var row = function (x) { return '<li><b>' + esc(x[0]) + '</b><span>' + esc(x[1]) + '</span>' + (x[2] && x[2] !== 'main' ? '<button type="button" data-act="x-show" data-sel="' + esc(x[2]) + '">Show</button>' : '') + '</li>'; };
     return '<h3 class="shh">This page – ' + esc(A.name[v] || (v === 'cockpit' ? 'SPLIT' : v)) + '</h3><ul class="hlp">' + list.map(row).join('') + '</ul><h3 class="shh">Header</h3><ul class="hlp">' + HELP._top.map(row).join('') + '</ul><h3 class="shh">Colours</h3>' + COLORS +
       '<p class="note">Preparation aid only – the OFP, official Emirates documentation and ATC prevail.</p>';
@@ -498,10 +554,10 @@ window.FPTools = function (A) {
     if (P.atick) { var g = G(); if (g) g.gps(true); A.toast(navigator.geolocation ? 'Auto-tick on: waypoints tick themselves 1 NM after you pass them (GPS, within 30 NM of the route). Undo is always offered.' : 'Auto-tick on, but this device has no location service.'); }
   });
   /* design option (v1.4 choice): cockpit (default) | glass | avionics | paper */
-  var SKINS = { avionics: 'Avionics', cockpit: 'Cockpit', glass: 'Glass', paper: 'Briefing' };
-  function applySkin() { var k = SKINS[P.skin] ? P.skin : 'avionics'; /* Avionics = default style (user 05 NOV 26) */ if (k === 'cockpit') document.documentElement.removeAttribute('data-skin'); else document.documentElement.setAttribute('data-skin', k); var b = $('skin-b'); if (b) b.textContent = 'Style: ' + SKINS[k]; }
+  var SKINS = { pro: 'Professional', deck: 'Flight Deck', ops: 'Ops Desk', avionics: 'Avionics', cockpit: 'Cockpit', glass: 'Glass', paper: 'Briefing' };
+  function applySkin() { var k = SKINS[P.skin] ? P.skin : (SKINS[window.FP_DEFAULT_SKIN] ? window.FP_DEFAULT_SKIN : 'pro'); /* Professional = default style (user 09 NOV 26; Avionics was the 05 NOV default) */ if (k === 'cockpit') document.documentElement.removeAttribute('data-skin'); else document.documentElement.setAttribute('data-skin', k); var b = $('skin-b'); if (b) b.textContent = 'Style: ' + SKINS[k]; }
   var sgD = document.querySelector('#settings .sg:nth-child(2)'); if (sgD) sgD.insertAdjacentHTML('beforeend', '<button type="button" id="skin-b"></button>');
-  on('skin-b', 'click', function () { var ks = Object.keys(SKINS), i = ks.indexOf(SKINS[P.skin] ? P.skin : 'avionics'); P.skin = ks[(i + 1) % ks.length]; A.savePrefs(); applySkin(); A.applyTheme(); });
+  on('skin-b', 'click', function () { var ks = Object.keys(SKINS), i = ks.indexOf(SKINS[P.skin] ? P.skin : (SKINS[window.FP_DEFAULT_SKIN] ? window.FP_DEFAULT_SKIN : 'pro')); P.skin = ks[(i + 1) % ks.length]; A.savePrefs(); applySkin(); A.applyTheme(); });
   applySkin();
   applyDim(); applyNav(); applyHl();
 
@@ -513,6 +569,7 @@ window.FPTools = function (A) {
     var a = b.dataset.act; if (a.indexOf('x-') !== 0) { if (T2 && T2.act) T2.act(b, ev); return; }
     ev.preventDefault();
     if (a === 'x-timers') openTimers();
+    else if (a === 'x-refcopy') { var tx = b.dataset.t; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tx).then(function () { A.toast('Copied: ' + tx); }, function () { A.toast(tx); }); else A.toast(tx); }
     else if (a === 'x-tmp') { var p = PRESET[+b.dataset.i]; addTimer(p[0], p[1], p[2]); rerender(); }
     else if (a === 'x-tmadd') {
       var n = $('tm-n').value.trim(), m = parseInt($('tm-m').value, 10), at = $('tm-at').value.trim(), r = $('tm-r').checked;
@@ -554,5 +611,5 @@ window.FPTools = function (A) {
   }
   function shown(h) { if (MENU) MENU.hidden = true; if (T2 && T2.shown) T2.shown(h); }
   X.act = act; X.timers = function () { return S.timers; };
-  return { items: items, alerts: tmAlerts, leftTxt: leftTxt, timerDone: timerDone, act: act, cards: cards, tick: tick, shown: shown, onFix: onFix, X: X };
+  return { items: items, alerts: tmAlerts, leftTxt: leftTxt, timerDone: timerDone, act: act, cards: cards, tick: tick, shown: shown, onFix: onFix, X: X, wxnt: function () { if (T2 && T2.wxnt) T2.wxnt(); }, wn: T2 && T2.wn };
 };

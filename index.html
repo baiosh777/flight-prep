@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Flight Prep</title>
-<meta name="description" content="Offline flight preparation companion: flight clock, fuel-check timer, next action, waypoint tracker, call deadlines, route globe and the briefing package.">
+<meta name="description" content="Offline flight preparation companion: preparation pages (dash, departure, weather and NOTAMs, threats, arrival) and in-flight pages (now, waypoints, map, timers, diversion).">
 <meta name="theme-color" content="#181c24">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,6 +16,9 @@
 <link rel="preload" href="inter-Regular.woff" as="font" type="font/woff" crossorigin>
 <link rel="preload" href="inter-Bold.woff" as="font" type="font/woff" crossorigin>
 <link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app3.css">
+<link rel="stylesheet" href="skin_deck.css">
+<link rel="stylesheet" href="skin_ops.css">
 </head>
 <body>
 <!--SHELL-START-->
@@ -31,6 +34,18 @@
  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/></symbol>
  <symbol id="i-fuel" viewBox="0 0 24 24"><path d="M5 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M4 21h12M15 9h2a2 2 0 0 1 2 2v5a1.5 1.5 0 0 0 3 0V8l-3-3"/><path d="M8 7h4"/></symbol>
+ <symbol id="i-dash" viewBox="0 0 24 24"><path d="M4 14a8 8 0 0 1 16 0"/><path d="M12 14l4-5"/><path d="M3 19h18"/><circle cx="12" cy="14" r="1.2"/></symbol>
+ <symbol id="i-dep" viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M3.5 13.5 8 15l11-5.5a2 2 0 0 0-2-3.4l-3.6 1.8L7 5.3 5 6.3l4 3.2-3.5 1.7-2-1L2 11z"/></symbol>
+ <symbol id="i-arr" viewBox="0 0 24 24"><path d="M3 19h18"/><path d="M4 12.5 9.5 15l10.5 2.4a2 2 0 0 0 .9-3.9l-3.9-.9L13 5.5l-2.2-.5.9 5.1-3.8-.9-1-2.2-2.2-.5z"/></symbol>
+ <symbol id="i-wx" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 8.5a3.8 3.8 0 0 1 .5 7.5H7z"/><path d="m9 20-1 2M13 20l-1 2M17 20l-1 2"/></symbol>
+ <symbol id="i-tem" viewBox="0 0 24 24"><path d="M12 3 3.5 18.5h17z"/><path d="M12 9.5v4.5"/><path d="M12 16.5h.01"/></symbol>
+ <symbol id="i-wpt" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8 16.5 16 7.5"/><path d="M4 10.5 6 8l2 2.5M16 13.5l2 2.5 2-2.5"/></symbol>
+ <symbol id="i-map" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></symbol>
+ <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+ <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+ <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5V5.5M8 7h8M8 10.5h8"/></symbol>
+ <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+ <symbol id="i-page" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></symbol>
  <symbol id="i-plane" viewBox="0 0 24 24"><path d="M10.5 21 12 18l1.5 3M12 3c.8 0 1.3.7 1.3 1.6V9l7.2 4.3v1.9l-7.2-2.2v4.2l2 1.6v1.4L12 19l-3.3 1.2v-1.4l2-1.6V13l-7.2 2.2v-1.9L10.7 9V4.6C10.7 3.7 11.2 3 12 3z"/></symbol>
 </defs></svg>
 <header class="top" id="top">
@@ -39,15 +54,15 @@
   <span class="fl"><b id="fl-b">No flight loaded</b><small id="fl-small">Load a flight file in FLIGHTS</small></span>
   <span id="phase" class="phase" hidden></span>
   <a href="#now" id="nowbtn" class="nowbtn" data-v="now"><svg class="ic" aria-hidden="true"><use href="#i-now"/></svg>NOW</a>
+  <span class="el ins"><small id="el-lab">ELAPSED</small><b id="elapsed">-:--</b></span>
+  <span class="eta ins"><small>ETA</small><b id="eta">----Z</b><small class="lt" id="eta-lt"></small><small class="etaoff" id="eta-off" hidden></small></span>
+  <span class="tmx" id="tmx" aria-live="polite"></span>
   <span class="utc ins"><small>UTC</small><b id="utc">--:--:--</b></span>
   <button type="button" id="set-btn" class="setbtn icb" aria-label="Settings" aria-expanded="false" aria-controls="settings"><svg class="ic" aria-hidden="true"><use href="#i-set"/></svg></button>
  </div>
  <div class="row2">
   <button type="button" id="airborne" class="air"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>AIRBORNE NOW</button>
   <label class="to ins"><small>T/O</small><span><input id="to-input" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="HHMM" aria-label="Take-off time UTC, HHMM"><i>Z</i></span></label>
-  <span class="el ins"><small id="el-lab">ELAPSED</small><b id="elapsed">-:--</b></span>
-  <span class="eta ins"><small>ETA</small><b id="eta">----Z</b><small class="lt" id="eta-lt"></small></span>
-  <span class="tmx" id="tmx" aria-live="polite"></span>
   <button type="button" id="fc" class="fc idle"><small id="fc-l">FUEL CHECK</small><b id="fc-t">START</b></button>
   <button type="button" id="b-divert" class="divbtn" aria-label="Diversion helper: nearest airports"><svg class="ic" aria-hidden="true"><use href="#i-divert"/></svg>DIVERT</button>
  </div>
@@ -57,10 +72,10 @@
   <div class="sg"><small>Text size</small><button type="button" id="fs-dn" aria-label="Smaller text">A−</button><b id="fs-v">100%</b><button type="button" id="fs-up" aria-label="Larger text">A+</button></div>
   <div class="sg"><small>Display</small><button type="button" id="theme">Theme: auto</button><label class="dimr">Dim <input type="range" id="dim" min="0" max="70" step="5" value="0" aria-label="Dim the screen"><b id="dim-v">0%</b></label><button type="button" id="wake">Keep screen on: off</button></div>
   <div class="sg"><small>Alerts</small><button type="button" id="sound">Sound alerts: off</button><button type="button" id="sound-test">Test sound</button></div>
-  <div class="sg"><small>Navigation</small><button type="button" id="swipe">Swipe pages: on</button><button type="button" id="atick">Auto-tick by GPS: off</button></div>
+  <div class="sg"><small>Navigation</small><button type="button" id="swipe">Swipe pages: on</button><button type="button" id="atick">Auto-tick by GPS: off</button><!--APP-ONLY-START--><a href="#flights" class="sbtn" data-v="flights"><svg class="ic" aria-hidden="true"><use href="#i-folder"/></svg>Flights (load / change flight)</a><!--APP-ONLY-END--></div>
  </div>
  <div class="navrow">
-  <nav class="tabs" id="tabs" aria-label="Briefing package"></nav>
+  <nav class="tabs" id="tabs" aria-label="Pages: preparation, in flight"></nav>
   <div class="tools">
    <button type="button" id="b-tools" class="icb" aria-label="Tools: weather, NOTAMs, calculators, safety cards"><svg class="ic" aria-hidden="true"><use href="#i-grid"/></svg></button>
    <button type="button" id="b-search" class="icb" aria-label="Search the whole pack"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg></button>
@@ -97,7 +112,8 @@
  <h1 class="pt">Flights</h1>
  <p class="sub">Flights are stored on this iPad only. Everything works without internet once a flight is loaded.</p>
  <div class="ldbox">
-  <label class="load"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>Load flight file<input type="file" id="load-file" accept=".json,application/json"></label>
+  <label class="load"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>Load OFP (PDF) or flight file<input type="file" id="load-file" accept=".pdf,.json,.txt,application/pdf,application/json"></label>
+  <p class="lhint">Pick the <b>Lido OFP PDF</b> straight from Files and the app builds the flight itself (offline). A prep file from Claude adds the company pages (charts, CCI / AOI, MEL, comms).</p>
   <button type="button" id="paste-btn" class="pastebtn">Paste flight</button>
   <label class="ckl retck" id="asret-l" hidden><input type="checkbox" id="asret"> <span>Save as the <b>return flight</b> of <b id="asret-n"></b> (turnaround)</span></label>
  </div>
@@ -111,6 +127,8 @@
   <li>At take-off tap <b>AIRBORNE NOW</b> (or type the time). Tap waypoint rows as you pass them; tap <b>Done</b> on calls; tap <b>FUEL CHECK</b> after each fuel check.</li>
   <li>Your take-off time, ticks and timers stay on this iPad, per flight. Flights older than 5 days are removed automatically.</li>
  </ol>
+ <div id="lib-list" class="msg"></div>
+ <p class="note" id="lib-info"></p>
  <p class="note" id="app-info"></p>
 </section>
 <!--APP-ONLY-END-->
@@ -130,6 +148,14 @@
 <script src="fp_tools2.js"></script>
 <script src="fp_agc.js"></script>
 <script src="fp_amap.js"></script>
+<script src="fp_wxnt.js"></script>
+<script src="fp_refs.js"></script>
+<script src="fp_regs.js"></script>
+<script src="fp_ux.js"></script>
+<script src="fp_lib.js"></script>
+<script src="fp_online.js"></script>
+<script src="fp_ofp.js"></script>
+<script src="fp_auto.js"></script>
 <script src="fp_mount.js"></script>
 <script src="app.js"></script>
 </body>

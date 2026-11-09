@@ -1019,3 +1019,12 @@ body .top .el { cursor: pointer; }
 @media (max-width: 760px) { .dvk { grid-template-columns: 1fr; } .dvs { grid-template-columns: 3.6em minmax(0, 1fr); grid-template-areas: "i n" "i d" "q q"; } }
 .dvsum { margin: 0 0 4px; padding-left: 1.1em; display: flex; flex-direction: column; gap: 3px; } .dvsum .ref { font-size: .78em; color: var(--muted); white-space: nowrap; }
 .dvfx { font-size: .86em; color: var(--muted); }
+
+/* ---- v2.0 (05 NOV 26) standing rule: DXB recent changes (NOTAMs, CCI / AOI) ---- */
+.dxbx { margin: 10px 0 14px; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--amb); background: color-mix(in srgb, var(--amb) 9%, var(--panel)); }
+.dxh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; } .dxh b { font-size: 1.08em; letter-spacing: .02em; } .dxh small { color: var(--muted); font-size: .8em; }
+.dxl { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dxl li { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 6px 9px; }
+.dxnew { display: inline-block; font: 800 .7em var(--body); letter-spacing: .08em; padding: 1px 6px; border-radius: 6px; background: var(--amb); color: #1a1205; margin-right: 6px; vertical-align: .1em; }
+.dxv { color: var(--muted); font-size: .85em; } .dxf { font-size: .85em; color: var(--muted); margin: 4px 0 0; } .dxno { margin: 4px 0; color: var(--fg); }
+.dthr li.dxt { border-left-color: var(--red); background: color-mix(in srgb, var(--amb) 9%, var(--panel)); }
