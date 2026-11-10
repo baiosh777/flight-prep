@@ -1,0 +1,29 @@
+# Flight Prep - live weather (and NOTAMs, if an FAA key is stored) next to the app.
+# The app is a static page and aviationweather.gov sends no CORS header, so the app cannot call it
+# directly. This job runs on GitHub, writes data/wx.json into the same site, and the app fetches that.
+name: weather
+on:
+  schedule:
+    - cron: '7,37 * * * *'      # twice an hour
+  workflow_dispatch:             # or run it by hand from the Actions tab
+permissions:
+  contents: write
+jobs:
+  wx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch METAR / TAF / SIGMET
+        run: python3 tools/wx_fetch.py
+      - name: Fetch NOTAMs (only if an FAA key is stored in the repository secrets)
+        env:
+          FAA_CLIENT_ID: ${{ secrets.FAA_CLIENT_ID }}
+          FAA_CLIENT_SECRET: ${{ secrets.FAA_CLIENT_SECRET }}
+        run: python3 tools/notam_fetch.py || echo "NOTAM step skipped"
+      - name: Commit if something changed
+        run: |
+          git config user.name  "flight-prep bot"
+          git config user.email "noreply@github.com"
+          git add data/wx.json data/sigmet.json data/notam.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "weather $(date -u +'%Y-%m-%d %H:%MZ')"
+          git push

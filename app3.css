@@ -416,3 +416,27 @@ body.flt main { font-size: calc(16.5px * var(--z)); }
 .wnon small{color:var(--mut)}
 .wxraw.live{border-left:3px solid var(--ok,#2fa866)}
 .wxraw.live b{color:var(--ok,#2fa866)}
+
+/* ---- v3.5: airport packs built from DocuNet - one chart picture, shown dark in the dark and night themes */
+.agcin img.agx, .dvafs img.agx { filter: invert(1) hue-rotate(180deg) brightness(.94) contrast(.94); }
+:root[data-theme="light"] .agcin img.agx, :root[data-theme="light"] .dvafs img.agx { filter: none; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]):not([data-theme="night"]) .agcin img.agx, :root:not([data-theme="dark"]):not([data-theme="night"]) .dvafs img.agx { filter: none; } }
+:root[data-theme="night"] .agcin img.agx, :root[data-theme="night"] .dvafs img.agx { filter: invert(1) hue-rotate(180deg) brightness(.7) contrast(.95); }
+table.brf td:first-child { white-space: nowrap; vertical-align: top; width: 1%; }
+table.brf td:nth-child(2) { line-height: 1.5; }
+table.brf td:nth-child(2) b { color: var(--amb); }
+table.brf td:last-child { vertical-align: top; width: 1%; white-space: nowrap; }
+table.brf td:last-child .ref { font-size: .82em; color: var(--mut, var(--muted)); }
+@media (max-width: 760px) { table.brf td:first-child, table.brf td:last-child { white-space: normal; } }
+td .fq { cursor: zoom-in; }
+.omc.chd { padding: 6px 8px; margin: 6px 0; }
+.omc.chd > summary { min-height: 40px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.omc.chd > summary small { color: var(--mut, var(--muted)); }
+.dvafc { margin-top: 6px; } .dvafc > small { display: block; color: var(--mut, var(--muted)); margin-bottom: 4px; }
+.dvafs { overflow: auto; max-height: 72vh; border: 1px solid var(--line); border-radius: 10px; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y pinch-zoom; }
+.dvafs img { display: block; width: 100%; min-width: 1000px; height: auto; }
+.libd { margin-top: 2px; } .libd summary { cursor: pointer; color: var(--mut, var(--muted)); font-size: .9em; } .libd { font-size: .92em; line-height: 1.5; }
+pre.pre { white-space: pre-wrap; word-break: break-word; font: inherit; font-size: .93em; line-height: 1.5; margin: 6px 0 2px; }
+b.bad { color: var(--red); }
+table.rwt td:not(:last-child), table.rwt th { white-space: nowrap; }
+table.rwt td:last-child { min-width: 12em; }

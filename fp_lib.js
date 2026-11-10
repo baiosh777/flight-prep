@@ -1,4 +1,4 @@
-/* fp_lib.js - Flight Prep 3.3: the stored libraries ("do it once, keep it").
+/* fp_lib.js - Flight Prep 3.5: the stored libraries ("do it once, keep it").
    Library files (schema fpapp.library.v1) are loaded in FLIGHTS and kept on the iPad:
      kind 'apt'  - airport packs: CCI / AOI summary, AGC with the vector map, runways / ILS / frequencies, diversion card
      kind 'fir'  - FIR comms: VHF in the order used, CPDLC log-on and its deadline, HF day / night, SATCOM, FIR notes
@@ -37,9 +37,10 @@
       h += '</div>';
     }
     if (e.cpdlc && e.cpdlc.addr) {
-      var by = (entryEet != null && e.cpdlc.before != null) ? hm(entryEet - e.cpdlc.before) : null;
+      var onGnd = entryEet != null && e.cpdlc.before != null && entryEet - e.cpdlc.before <= 0;   // v3.5: the departure FIR - no clock time before take-off
+      var by = (entryEet != null && e.cpdlc.before != null && !onGnd) ? hm(entryEet - e.cpdlc.before) : null;
       h += '<div class="cmc"><b class="cmk">CPDLC</b> <span class="cplg">LOGON <b>' + esc(e.cpdlc.addr) + '</b>' +
-        (by ? ' by <b>' + esc(by) + '</b>' : (e.cpdlc.before != null ? ' <b>' + e.cpdlc.before + ' min before entry</b>' : '')) + '</span>' +
+        (onGnd ? ' <b>before departure</b>' : by ? ' by <b>' + esc(by) + '</b>' : (e.cpdlc.before != null ? ' <b>' + e.cpdlc.before + ' min before entry</b>' : '')) + '</span>' +
         (e.cpdlc.note ? ' <small>' + esc(e.cpdlc.note) + '</small>' : '') + '</div>';
     } else if (e.cpdlc === null) {
       h += '<div class="cmc"><b class="cmk">CPDLC</b> none in this FIR (Lido RSI) – voice and SATCOM.</div>';
@@ -60,12 +61,13 @@
   /* airport frequencies (from the airport pack's diversion card: Lido AFC / AOI) */
   function aptComms(p, kind) {
     if (!p || !p.div || !p.div.freqs || !p.div.freqs.length) return '';
-    var want = kind === 'dep' ? ['ATIS', 'DLV', 'DELIVERY', 'GND', 'GROUND', 'TWR', 'DEP'] : ['ATIS', 'ARR', 'APP', 'TWR', 'GND'];
+    var want = kind === 'dep' ? ['ATIS', 'DLV', 'DELIVERY', 'GND', 'GROUND', 'TWR', 'TOWER', 'DEP'] : ['ATIS', 'ARR', 'APP', 'DIR', 'RADAR', 'TWR', 'TOWER', 'GND', 'GROUND'];
+    var skip = kind === 'dep' ? /ATIS ARR/ : /ATIS DEP/;      // v3.5: the other side's ATIS is left out
     var list = [];
     want.forEach(function (w) {
       p.div.freqs.forEach(function (f) {
         var n = String(f[0]).toUpperCase();
-        if (n.indexOf(w) >= 0 && !list.filter(function (x) { return x[0] === f[0]; }).length) list.push(f);
+        if (n.indexOf(w) >= 0 && !skip.test(n) && !list.filter(function (x) { return x[0] === f[0]; }).length) list.push(f);
       });
     });
     if (!list.length) list = p.div.freqs.slice(0, 5);
@@ -127,23 +129,26 @@
     /* ---- airport packs */
     var AP = libs && libs.apt && libs.apt.airports;
     if (AP) {
-      var icaos = {};
-      [fl.dep, fl.arr].forEach(function (x) { if (x) icaos[x] = 1; });
-      (D.alts || []).forEach(function (a) { if (a.icao) icaos[a.icao] = 1; });
-      (D.chain || []).forEach(function (c) { if (c.icao) icaos[c.icao] = 1; });
-      Object.keys(icaos).forEach(function (ic) {
+      L.icaos(rec).forEach(function (ic) {
         var p = AP[ic];
         if (!p) return;
         used.apt.push(ic);
         if (p.info) { D.aptinfo = D.aptinfo || {}; if (!D.aptinfo[ic]) D.aptinfo[ic] = p.info; }
-        if (p.div) { D.divinfo = D.divinfo || {}; if (!D.divinfo[ic]) D.divinfo[ic] = p.div; }
+        if (p.div) {
+          D.divinfo = D.divinfo || {};
+          if (!D.divinfo[ic]) { D.divinfo[ic] = p.div; if (p.afc && p.afc.length) D.divinfo[ic].afc = p.afc.map(function (a) { return { t: a.t, w: a.w, h: a.h, code: a.code }; }); }
+        }
       });
+      L._ap = AP;                                           // kept for the chart pictures of the diversion card (FPLib.img)
       if (auto) {
         ['dep', 'arr'].forEach(function (side) {
           var ic = side === 'dep' ? fl.dep : fl.arr, p = AP[ic];
           if (!p || !p[side] || !rec.views || !rec.views[side]) return;
-          rec.views[side] = rebar(rec.views[side], 'The weather, NOTAMs, runway and fuel above are from this OFP; the CCI / AOI summary, the AGC and the vector airport map below come from the stored <b>' + esc(ic) + ' airport pack</b> (' + esc(p[side].src || 'prepared flight') + ').') +
-            '<div class="bar"><span>Airport pack ' + esc(ic) + '</span><small>' + esc(p[side].src || '') + ' – not from this OFP</small></div>' + p[side].html;
+          /* v3.5 packs: the brief for this side, then the shared summary, the charts (once) and the Lido items in full */
+          var body = p[side].html || ((p[side].top || '') + (p.summary || '') + (p.common || '') + (p.items || ''));
+          if (!body) return;
+          rec.views[side] = rebar(rec.views[side], 'The weather, NOTAMs, runway and fuel above are from this OFP; the brief, the CCI / AOI text and the charts below come from the stored <b>' + esc(ic) + ' airport pack</b> (' + esc(p[side].src || 'prepared flight') + ').') +
+            '<div class="bar"><span>Airport pack ' + esc(ic) + '</span><small>' + esc(p[side].src || '') + ' – not from this OFP</small></div>' + body;
         });
       }
     }
@@ -209,6 +214,23 @@
     });
     return o;
   }
+  /* the airports a flight can use a pack for: departure, destination, OFP alternates, the diversion chain and the map airports */
+  L.icaos = function (rec) {
+    var D = (rec && rec.data) || {}, fl = D.flight || {}, o = {};
+    [fl.dep, fl.arr].forEach(function (x) { if (x) o[x] = 1; });
+    (D.alts || []).forEach(function (a) { if (a.icao) o[a.icao] = 1; });
+    (D.chain || []).forEach(function (c) { if (c.icao) o[c.icao] = 1; });
+    ((D.geo || {}).apt || []).forEach(function (a) { if (a.icao) o[a.icao] = 1; });
+    (D.wx || []).forEach(function (w) { if (w.icao) o[w.icao] = 1; });
+    return Object.keys(o);
+  };
+  /* a chart picture of a stored pack (data URL), by its Lido item number - used by the diversion card */
+  L.img = function (icao, code) {
+    var p = L._ap && L._ap[icao]; if (!p || !p.common) return '';
+    var i = p.common.indexOf('data-code="' + code + '"'); if (i < 0) return '';
+    var a = p.common.indexOf('src="', i), b = a < 0 ? -1 : p.common.indexOf('"', a + 5);
+    return b < 0 ? '' : p.common.slice(a + 5, b);
+  };
   function aptOf(libs, icao) { return (libs && libs.apt && libs.apt.airports && libs.apt.airports[icao]) || null; }
 
   /* ---------------------------------------------------------------- merging library files as they are loaded */
@@ -232,7 +254,12 @@
   };
   L.describe = function (l) {
     if (!l) return '';
-    if (l.kind === 'apt') return 'Airport packs: <b>' + Object.keys(l.airports || {}).sort().join(', ') + '</b>';
+    if (l.kind === 'apt') {
+      var ix = l.index || l.airports || {}, ks = Object.keys(ix).sort();
+      var full = ks.filter(function (k) { return ix[k] && ix[k].brief; });
+      return 'Airport packs: <b>' + ks.length + '</b>' + (full.length ? ' · with a written brief: <b>' + full.join(', ') + '</b>' : '') +
+        '<details class="libd"><summary>all airports</summary>' + ks.join(', ') + '</details>';
+    }
     if (l.kind === 'fir') return 'FIR comms: <b>' + Object.keys(l.firs || {}).sort().join(', ') + '</b>';
     if (l.kind === 'mel') return 'MEL: <b>' + Object.keys(l.items || {}).length + ' items</b>';
     if (l.kind === 'regs') return 'Regulations: <b>' + (l.countries || []).length + ' countries, ' + (l.regions || []).length + ' regions</b>';

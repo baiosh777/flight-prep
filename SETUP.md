@@ -48,6 +48,36 @@ When Claude sends new app files, upload them to the same repository (they replac
    - **DEPARTURE and ARRIVAL** tabs: brief, CCI / AOI and AGC one under the other. **Interactive AGC** that follows the app theme (light / dark / night); at Malé also an own **vector airport map** (Map | Lido chart).
    - **MAP** tab full screen: side view, timeline and layer buttons fixed at the bottom, only the map moves.
 
+## v3.5 (10 NOV 2026) – airport packs with a written brief, 110 airports, 191 FIRs
+
+1. Unzip `flightprep_app_v3.5.zip` and upload **all** files to the repository as before (same file names – nothing new to add,
+   `app.js`, `fp_lib.js`, `fp_tools.js`, `fp_agc.js`, `app3.css`, `index.html`, `sw.js`, `data/stations.txt` and `SETUP.md` changed).
+   Open the app online → **Update now**. FLIGHTS shows "Flight Prep 3.5.0".
+2. **Library files stay in the Files app on the iPad – never in the repository.** Unzip the two library zips there.
+3. FLIGHTS → **Load OFP (PDF), flight or library files** → you can now **select several files at once**; the app stores them
+   one after the other and says how many it stored. Load all `apt_*.json` files and `fir_library.json`
+   (`mel_library.json` and `regs_library.json` are unchanged – load them only if they are not on the iPad yet).
+4. What is new in the packs for **SIN, KTI, STN, NBO, PEK**:
+   - **Departure / Arrival / On the ground – brief**: written from the CCI, AOI and AFC, must-dos in bold, the Lido item next to every row;
+   - **Runways and ILS** and **Frequencies** read off the AFC chart (tap a frequency to enlarge it);
+   - **Low visibility – 777-300ER** and the **CCI page** as pictures of the Emirates pages (RETI colour boxes, tables as printed);
+   - **Charts**: AGC, temporary-works charts, AFC, apron charts, taxi-route charts, minima – upright, pinch to zoom, dark in the dark themes;
+   - **Lido items in full** underneath, so the brief can always be checked against the text.
+5. **Alternates (44 airports)** have the Lido text, the runway table (runway, LDA, width), ILS idents, frequencies and the
+   **AFC chart as a picture** – DIVERT → tap the airport → **AFC 2-10**.
+6. **FIR comms**: 191 FIRs. 13 are written by hand (VHF sectors, notes); 178 are built by rule from the Lido RSI data link,
+   SATCOM and HF tables – CPDLC log-on address and time before entry, HF by network, SATCOM short codes. They have **no VHF
+   sector frequencies** (not in those tables). A log-on deadline appears on NOW only for FANS 1/A FIRs with a stated time.
+7. The app now keeps **one record per airport**, so opening a flight reads only that flight's airports – the library can grow
+   without slowing the app. Packs loaded with 3.3 / 3.4 are converted the first time 3.5 starts.
+
+## v3.4 (10 NOV 2026) – paste an OFP
+
+Besides picking the OFP PDF in Files, you can now **copy the OFP text** (from the PDF viewer, the briefing
+mail, anywhere) and use **Paste OFP or flight** on the FLIGHTS page – or long-press the box below it and
+paste. The app recognises a Lido OFP and builds the flight from it, exactly as it does from the PDF.
+Pasted text loses the indentation of the PDF, so the NOTAM reader now accepts both.
+
 ## Update to v3.3 (10 NOV 2026) – libraries you load once, and live weather
 
 ### 1. The app files

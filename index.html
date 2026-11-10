@@ -112,12 +112,12 @@
  <h1 class="pt">Flights</h1>
  <p class="sub">Flights are stored on this iPad only. Everything works without internet once a flight is loaded.</p>
  <div class="ldbox">
-  <label class="load"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>Load OFP (PDF) or flight file<input type="file" id="load-file" accept=".pdf,.json,.txt,application/pdf,application/json"></label>
-  <p class="lhint">Pick the <b>Lido OFP PDF</b> straight from Files and the app builds the flight itself (offline). A prep file from Claude adds the company pages (charts, CCI / AOI, MEL, comms).</p>
-  <button type="button" id="paste-btn" class="pastebtn">Paste flight</button>
+  <label class="load"><svg class="ic" aria-hidden="true"><use href="#i-plane"/></svg>Load OFP (PDF), flight or library files<input type="file" id="load-file" multiple accept=".pdf,.json,.txt,application/pdf,application/json"></label>
+  <p class="lhint">Pick the <b>Lido OFP PDF</b> straight from Files – or copy the OFP text and use <b>Paste OFP or flight</b>. The app builds the flight itself, offline. Library files (airport packs, FIR comms, MEL, regulations) add the company pages – <b>select several at once</b>; they stay on this iPad for every flight.</p>
+  <button type="button" id="paste-btn" class="pastebtn">Paste OFP or flight</button>
   <label class="ckl retck" id="asret-l" hidden><input type="checkbox" id="asret"> <span>Save as the <b>return flight</b> of <b id="asret-n"></b> (turnaround)</span></label>
  </div>
- <textarea id="paste-zone" class="pzone" rows="2" placeholder="Or long-press here → Paste a copied flight file (or its text) – or drop the file here."></textarea>
+ <textarea id="paste-zone" class="pzone" rows="2" placeholder="Or long-press here → Paste: the OFP text copied out of the PDF, a flight file, or drop the file here."></textarea>
  <div id="load-msg" class="msg" hidden></div>
  <div id="flist" class="flights"></div>
  <div class="bar"><span>How to use</span><small>offline</small></div>

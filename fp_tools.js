@@ -207,7 +207,9 @@ window.FPTools = function (A) {
   }
   function divCard(r, I) {
     var row = function (k, v) { return v ? '<div class="dvk"><small>' + k + '</small><div>' + v + '</div></div>' : ''; };
-    var rw = (I.rwys || []).map(function (x) { return '<b>' + esc(x[0]) + '</b> LDA ' + x[1] + ' m'; }).join(' · ') + ((I.rwys || []).length ? ' · ' + I.rwys[0][2] + ' m wide' : '') + (I.elev != null ? ' · AD ELEV ' + I.elev + ' ft' : '');
+    var RW = I.rwys || [], oneW = RW.every(function (x) { return x[2] === RW[0][2]; });   // v3.5: the width per runway when they differ
+    var rw = RW.map(function (x) { return '<b>' + esc(x[0]) + '</b> LDA ' + x[1] + ' m' + (oneW ? '' : ' x ' + x[2]); }).join(' · ') + (RW.length && oneW ? ' · ' + RW[0][2] + ' m wide' : '') + (I.elev != null ? ' · AD ELEV ' + I.elev + ' ft' : '') + (I.ta ? ' · ' + esc(I.ta) : '');
+    var afc = (I.afc || []).map(function (c) { return '<button type="button" data-act="x-afc" data-icao="' + esc(r.a.icao) + '" data-code="' + esc(c.code) + '" data-t="' + esc(c.t) + '"><svg class="ic" aria-hidden="true"><use href="#i-map"/></svg>AFC ' + esc(c.code) + '</button>'; }).join('');
     var ils = (I.ils || []).map(function (x) { return esc(x[1]) + ' <b class="fq" data-fq="' + esc(x[0]) + '" data-lab="' + esc(r.a.icao + ' ' + x[1]) + '">' + esc(x[0]) + '</b>'; }).join(' · ');
     var fq = (I.freqs || []).map(function (x) { return esc(x[0]) + ' <b class="fq" data-fq="' + esc(x[1]) + '" data-lab="' + esc(r.a.icao + ' ' + x[0]) + '">' + esc(x[1]) + '</b>'; }).join(' · ');
     var wx = I.wx ? esc(I.wx.sum) + ((I.wx.metar || I.wx.taf) ? '<details class="cmx dvraw"><summary aria-label="METAR / TAF">' + EYE + '<span>METAR / TAF</span></summary><code>' + esc(I.wx.metar || '') + '</code><code>' + esc(I.wx.taf || '') + '</code></details>' : '') : '';
@@ -219,11 +221,11 @@ window.FPTools = function (A) {
     var arr = (I.sum ? I.sum.map(function (x) { return '<li>' + esc(x[0]) + ' <span class="ref">' + esc(x[1]) + '</span></li>'; }) :
       (I.arr || []).concat(I.add || []).map(function (x) { return '<li>' + esc(x) + '</li>'; })).join('');
     var fuel = (I.fuel || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + (I.etops ? '<li>' + esc(I.etops) + '</li>' : '');
-    var any = rw || ils || fq || cci || arr || nt || fuel;
+    var any = rw || ils || fq || cci || arr || nt || fuel || afc;
     return '<div class="dvb">' + (any ? row('Runways', rw) + row('ILS', ils) + row('Frequencies', fq) + row('Weather (OFP)', wx || 'no METAR / TAF in the OFP') +
       row('NOTAMs (OFP)', nt ? '<ul>' + nt + '</ul>' + nmore : 'none with runway / ILS / closure keywords') + row('AOI / CCI summary', (arr ? '<ul class="dvsum">' + arr + '</ul>' : '') + (cci ? '<div class="dvfx">' + cci + '</div>' : '')) + row('Fuel (OFP)', fuel ? '<ul>' + fuel + '</ul>' : '') :
       '<p class="note">No Lido AOI / CCI for this airport in this pack' + (r.wx ? ' – OFP weather only.' : '.') + '</p>' + (r.wx && (r.wx.metar || r.wx.taf) ? '<code>' + esc(r.wx.metar || '') + '</code><code>' + esc(r.wx.taf || '') + '</code>' : '')) +
-      '<div class="dvbb"><button type="button" data-act="x-map" data-icao="' + esc(r.a.icao) + '"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Show on map</button>' +
+      '<div class="dvbb"><button type="button" data-act="x-map" data-icao="' + esc(r.a.icao) + '"><svg class="ic" aria-hidden="true"><use href="#i-pin"/></svg>Show on map</button>' + afc +
       '</div></div>';
   }
   var EYE = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -583,6 +585,14 @@ window.FPTools = function (A) {
     else if (a === 'x-div') openDivert('apt');
     else if (a === 'x-fcstop') { A.fcStop(); rerender(); }
     else if (a === 'x-dtab') { divTab = b.dataset.t; if (sheet && sheet.kind === 'divert') rerender(); else openDivert(divTab); }
+    else if (a === 'x-afc') {   // v3.5: the Lido airport facility chart of a stored pack, shown in the card when asked for
+      var card = b.closest('.dvb'), box = card && card.querySelector('.dvafc[data-code="' + b.dataset.code + '"]');
+      if (box) { box.remove(); return; }
+      var src = window.FPLib && window.FPLib.img ? window.FPLib.img(b.dataset.icao, b.dataset.code) : '';
+      box = document.createElement('div'); box.className = 'dvafc'; box.setAttribute('data-code', b.dataset.code);
+      box.innerHTML = src ? '<small>' + esc(b.dataset.t || '') + ' – Lido AFC from the airport pack; pinch to zoom</small><div class="dvafs"><img class="agx" src="' + src + '" alt="' + esc(b.dataset.icao) + ' AFC"></div>' : '<p class="note">The chart picture is not stored on this iPad.</p>';
+      if (card) card.appendChild(box);
+    }
     else if (a === 'x-map') { var icao = b.dataset.icao; closeSheet(); if (A.cur() !== 'cockpit' && A.cur() !== 'route-map') location.hash = 'route-map'; setTimeout(function () { var g = G(); if (g) g.focusApt(icao); }, 250); }
     else if (a === 'x-sgo') searchGo(+b.dataset.i);
     else if (a === 'x-show') showSel(b.dataset.sel);

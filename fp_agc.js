@@ -76,6 +76,12 @@
     var top = document.getElementById('top'); window.scrollTo({ top: scrollY + t.getBoundingClientRect().top - (top ? top.offsetHeight : 0) - 6, behavior: 'smooth' });
   });
   window.FPAgcInit = init;
+  /* v3.5: a chart inside a closed <details> has no size until it is opened - load its picture and fit it then */
+  document.addEventListener('toggle', function (e) {
+    var d = e.target; if (!d || !d.open || !d.querySelectorAll) return;
+    if (window.FPImg) window.FPImg.hydrate(d);
+    setTimeout(function () { init(); d.querySelectorAll('.agcx').forEach(function (r) { if (r._agcFit) r._agcFit(); }); }, 40);
+  }, true);
   window.addEventListener('hashchange', function () { setTimeout(function () { document.querySelectorAll('.agcx').forEach(function (r) { if (r._agcFit) r._agcFit(); }); }, 60); });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { setTimeout(init, 0); }); else setTimeout(init, 0);
   var mo = new MutationObserver(function () { if (document.querySelector('.agcx:not([data-i])')) { document.querySelectorAll('.agcx').forEach(function (r) { r.setAttribute('data-i', '1'); }); setTimeout(init, 0); } });

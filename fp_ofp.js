@@ -361,9 +361,15 @@
           bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', est: !!h[4], x: [] };
         out.push(cur); continue;
       }
-      if (cur && /^\s\s/.test(l) && st && !/^===/.test(st)) cur.x.push(st);
+      if (cur && st && !/^===/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
     }
     return fin(out);
+  }
+  /* pasted text loses the indentation the Lido PDF has, so a NOTAM body line is also accepted when it is
+     clearly not one of the structural lines (a new NOTAM, an airport, a category or a section rule). */
+  function loose(st) {
+    return !NOTAM_HDR.test(st) && !/^\++/.test(st) && !/^-{3,}|^={3,}/.test(st) &&
+      !/^[A-Z]{4}\s*\/[A-Z0-9]{3}\s/.test(st) && !SECT[st] && !/^(ENROUTE AIRPORT\(S\)|AREA ENROUTE|EXTENDED AREA|CREW BULLETIN|CREW ALERT|Weather|AIRPORTLIST)/.test(st);
   }
   function fin(out) {
     out.forEach(function (n) {
@@ -388,7 +394,7 @@
         cur = { fir: fir, id: h[1], a: vmin(h[2], date0), b: (h[3] === 'UFN' || h[3] === 'PERM') ? null : vmin(h[3], date0), bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', x: [] };
         out.push(cur); continue;
       }
-      if (cur && /^\s\s/.test(l) && st && !/^---/.test(st)) cur.x.push(st);
+      if (cur && st && !/^---/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
     }
     out = fin(out);
     out.forEach(function (n) {
