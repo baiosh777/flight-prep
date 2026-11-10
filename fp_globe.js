@@ -68,7 +68,7 @@ window.FPGlobe = function (host, D, L) {
   function posAt(e) { var s = seg(e); return d3.geoInterpolate(RC[s.k], RC[s.k + 1])(s.f); }
   function distAt(e) { var s = seg(e); return CUM[s.k] + s.f * (CUM[s.k + 1] - CUM[s.k]); }
   function subLine(e1, e2) { var a = seg(e1), b = seg(e2), c = [posAt(e1)]; for (var j = a.k + 1; j <= b.k; j++) c.push(RC[j]); c.push(posAt(e2)); return { type: 'LineString', coordinates: c }; }
-  function firAt(e) { var c = null; D.firs.forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
+  function firAt(e) { var c = null; (D.firseq || D.firs).forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
   function rowOf(n) { for (var j = 0; j < D.rows.length; j++) if (D.rows[j].wpt === n) return D.rows[j]; return null; }
 
   /* ---------- DOM */
@@ -635,7 +635,7 @@ window.FPGlobe = function (host, D, L) {
       if (lay.wpt && w.m && w.note && huge) label(w.note, [p[0], p[1] + 14], { pri: 2, col: c.muted, font: 'italic 500 11px ' + c.font, size: 12 });
     });
     // FIR entries along the route
-    D.firs.forEach(function (f) {
+    (D.firseq || D.firs).forEach(function (f) {
       if (!f.eet_min) return; var ll = posAt(f.eet_min); if (!vis(ll)) return; var p = proj(ll); if (!onScreen(p)) return;
       x.beginPath(); x.arc(p[0], p[1], 6.5, 0, 2 * PI); x.strokeStyle = c.fir; x.lineWidth = 2; x.stroke();
       HITS.push({ x: p[0], y: p[1], r: 6, html: function () { return '<b class="gph">FIR entry ' + esc(f.fir) + ' ' + esc(f.name) + '</b><div>EET ' + tz(f.eet_min) + ' (FPL EET)</div>'; } });
@@ -725,7 +725,7 @@ window.FPGlobe = function (host, D, L) {
   function lvlAt(e) { var P = PR.pts; for (var i = 0; i < P.length - 1; i++) if (e <= P[i + 1][0]) { var f = P[i + 1][0] > P[i][0] ? (e - P[i][0]) / (P[i + 1][0] - P[i][0]) : 1; return P[i][1] + (P[i + 1][1] - P[i][1]) * Math.max(0, Math.min(1, f)); } return 0; }
   if (PV && PR) (function () {
     var h = '';
-    D.firs.forEach(function (f, i) { var b = i + 1 < D.firs.length ? D.firs[i + 1].eet_min : T; h += '<rect x="' + px(f.eet_min) + '" y="2" width="' + (px(b) - px(f.eet_min)) + '" height="14" class="' + f.cls + '"/><text x="' + (px(f.eet_min) + 3) + '" y="13" class="ptx b">' + esc(f.fir) + '</text>'; });
+    (D.firseq || D.firs).forEach(function (f, i) { var b = i + 1 < (D.firseq || D.firs).length ? (D.firseq || D.firs)[i + 1].eet_min : T; h += '<rect x="' + px(f.eet_min) + '" y="2" width="' + (px(b) - px(f.eet_min)) + '" height="14" class="' + f.cls + '"/><text x="' + (px(f.eet_min) + 3) + '" y="13" class="ptx b">' + esc(f.fir) + '</text>'; });
     [10000, 20000, 30000, 40000].forEach(function (ft) { h += '<line x1="' + PX0 + '" x2="' + PX1 + '" y1="' + py(ft) + '" y2="' + py(ft) + '" class="pg"/><text x="' + (PX0 - 4) + '" y="' + (py(ft) + 4) + '" class="ptx r">FL' + ft / 100 + '</text>'; });
     for (var m = 0; m <= T; m += 60) h += '<line x1="' + px(m) + '" x2="' + px(m) + '" y1="' + PY1 + '" y2="' + PY0 + '" class="pg"/>';
     var hi = null;

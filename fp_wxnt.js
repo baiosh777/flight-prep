@@ -27,7 +27,7 @@ window.FPWxNt = function (X) {
   function important(n) { return cls(n) > 0 || !!isNew(n) || isShort(n) || !!ST.pins[n.id]; }
   function all() {
     var L = (D.notams || []).slice();
-    (D.rnotams || []).forEach(function (n) { L.push(Object.assign({ role: 'ENR', icao: n.fir, cat: (n.kind || 'FIR').toUpperCase() }, n)); });
+    (D.rnotams || []).forEach(function (n) { L.push(Object.assign({ role: 'ENR', icao: n.fir, cat: (n.on === false ? 'NOT ON YOUR ROUTE · ' : '') + (n.kind || 'FIR').toUpperCase() }, n)); });   // v3.6: area blocks that are no FIR / waypoint of the route say so
     return L;
   }
   var ROLES = [['ALL', 'All'], ['DEP', 'Departure'], ['DEST', 'Destination'], ['ALTN', 'Alternates'], ['ETOPS', 'ETOPS'], ['ENR', 'En route']];

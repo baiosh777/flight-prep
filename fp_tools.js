@@ -164,7 +164,7 @@ window.FPTools = function (A) {
 
   /* ---------- DIVERT: nearest airports, emergency, lost comms, interception */
   var divTab = 'apt';
-  function curFir(e) { var c = null; D.firs.forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
+  function curFir(e) { var c = null; (D.firseq || D.firs).forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }   // v3.5.1: firseq keeps re-entries
   function here(e) { var g = G(); return g ? g.here(e) : null; }
   function aptRows(e) {
     var h = here(e); if (!h) return null;
@@ -571,6 +571,11 @@ window.FPTools = function (A) {
     var a = b.dataset.act; if (a.indexOf('x-') !== 0) { if (T2 && T2.act) T2.act(b, ev); return; }
     ev.preventDefault();
     if (a === 'x-timers') openTimers();
+    else if (a === 'x-covcopy') {   // v3.6: the not-covered list of the coverage block
+      var ct = document.getElementById('cov-txt'), cx = ct ? ct.value : '';
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cx).then(function () { A.toast('Copied – paste it to Claude.'); }, function () { if (ct) { ct.focus(); ct.select(); } A.toast('Select the text and copy it.'); });
+      else { if (ct) { ct.focus(); ct.select(); } A.toast('Select the text and copy it.'); }
+    }
     else if (a === 'x-refcopy') { var tx = b.dataset.t; if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tx).then(function () { A.toast('Copied: ' + tx); }, function () { A.toast(tx); }); else A.toast(tx); }
     else if (a === 'x-tmp') { var p = PRESET[+b.dataset.i]; addTimer(p[0], p[1], p[2]); rerender(); }
     else if (a === 'x-tmadd') {
@@ -605,7 +610,7 @@ window.FPTools = function (A) {
   /* ---------- per second / per page */
   /* flight progress line (header bottom edge) + phase chip */
   var PG = $('prog');
-  if (PG) { D.firs.forEach(function (f) { if (f.eet_min > 0 && f.eet_min < T) PG.insertAdjacentHTML('beforeend', '<b style="left:' + (f.eet_min / T * 100).toFixed(2) + '%"></b>'); });
+  if (PG) { (D.firseq || D.firs).forEach(function (f) { if (f.eet_min > 0 && f.eet_min < T) PG.insertAdjacentHTML('beforeend', '<b style="left:' + (f.eet_min / T * 100).toFixed(2) + '%"></b>'); });
     if (EI) PG.insertAdjacentHTML('beforeend', '<b class="et" style="left:' + (EI.entry.eet_min / T * 100).toFixed(2) + '%;width:' + ((EI.exit.eet_min - EI.entry.eet_min) / T * 100).toFixed(2) + '%"></b>'); }
   var TOC = LV.length ? LV[0].eet_min : 20;
   function phase(e) { var td = tod(); if (e < 0) return ['gnd', 'PRE-FLIGHT']; if (e < TOC) return ['climb', 'CLIMB']; if (td > 0 && e >= td && e < T) return ['desc', 'DESCENT']; if (e >= T) return ['land', 'LANDED']; var f = flAt(e); return ['cruise', 'CRUISE' + (f ? ' FL' + f : '')]; }

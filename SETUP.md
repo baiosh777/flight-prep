@@ -48,6 +48,47 @@ When Claude sends new app files, upload them to the same repository (they replac
    - **DEPARTURE and ARRIVAL** tabs: brief, CCI / AOI and AGC one under the other. **Interactive AGC** that follows the app theme (light / dark / night); at Malé also an own **vector airport map** (Map | Lido chart).
    - **MAP** tab full screen: side view, timeline and layer buttons fixed at the bottom, only the map moves.
 
+## v3.6 (10 NOV 2026) – route packs, coverage list, the whole NOTAM bulletin
+
+Upload **all** files of `flightprep_app_v3.6.0.zip` (the same file names and folders as 3.5 – nothing new to add). Open the app online → **Update now**.
+FLIGHTS shows "Flight Prep 3.6.0". Then load the three small library files of `flightprep_libraries_v3.6_routes.zip` in one go:
+`route_DXB-SIN.json`, `route_DXB-MLE.json` and the corrected `fir_library.json`.
+
+- **Route packs** (new library kind): what is written once for a city pair – FIR procedures on that routing (FLAS, SLOP, estimates, the
+  weather-deviation rule of each FIR, level and speed rules), VHF where a Lido text names one for the route, ASR lessons, and
+  threat → mitigation → reference by phase. The app puts them on the FIR boundary rows of WAYPOINTS and at the top of TEM with
+  **today's times from the OFP**. Stored: OMDB-WSSS, OMDB-VRMM, VRMM-OMDB. Every line names its Lido section.
+- **Coverage on DASH** (fold-out under the flags): per flight which airports have a pack (kind, Lido revision, age), which FIRs have
+  comms and a VHF frequency, whether the route is the one the route pack was written for (new waypoints / airways / FIRs are named),
+  and what nothing covers. **Copy the list** puts the not-covered list on the clipboard – send that to Claude once.
+- **The NOTAM bulletin is read completely.** Before, only the section "AREA ENROUTE DEPARTURE - DESTINATION" was read for area NOTAMs:
+  the FIRs around the departure (Muscat, Emirates – GNSS interference, flow control), blocks named after a waypoint (TARDI), danger
+  areas and the area around the destination were missing or shown under the last en-route airport. When a page break fell inside a
+  section header, the destination NOTAMs were filed under the departure (EK348, EK656 of 01 NOV). On the 13 OFPs tested every NOTAM
+  printed is now filed (for EK348: 252 of 252; area NOTAMs 10 → 62). If a count ever differs, a red banner says how many are missing.
+- **Area NOTAMs sorted by rule**: blocks that are a FIR or a waypoint of your route first (GNSS and security NOTAMs open and on the
+  FIR's waypoint row), the others folded away and labelled "not on your route".
+- **By rule from the OFP**: diversion column = the two nearest airports of the OFP list with the distance (not a suitability check);
+  step climbs / descents of PLND FL on their waypoint row; landing row with the destination frequencies; ETP row matched by name.
+- **Corrections**: the route line is read whatever its label ("E/MTT/R :"); DASH no longer cuts the flag list at 10; the En route
+  tab of the NOTAM tool shows the en-route airports too; "+ estimate" only where a FIR entry says so.
+- **Mumbai FIR weather deviation**: the FIR library said 10 NM. The India CRAR publishes no difference, so the ICAO 5 NM applies
+  (Lido GEN 1.4.2.17.4.2 / OM-C 12.4.2.2); 10 NM is the published difference of the Muscat, Male, Kuala Lumpur and Jakarta FIRs.
+
+## v3.5.1 (10 NOV 2026) – fixes found with the first real long-haul OFP (EK348 DXB-SIN)
+
+Upload `fp_ofp.js`, `fp_auto.js`, `fp_lib.js`, `fp_live.js`, `fp_globe.js`, `fp_tools.js`, `app.js`, `sw.js`, `SETUP.md` (or simply all files again).
+- **The OFP reader no longer misses the navlog, fuel and weather** when one stray item on a page sits left of the text margin
+  (EK348 built with one waypoint row and no fuel in 3.5). The left margin is now where most lines start.
+- **If something is not read, the app says so**: no waypoints = the flight is not built and the message says why; a missing fuel block,
+  weather section, flight number or alternates gives a red "Check this OFP by hand" banner on every page.
+- **FIR boundaries now follow the flight-plan EET list**, not the place where the navlog prints the FIR line. On the 13 OFPs tested the old
+  logic was up to 27 minutes late (Luanda on EK793) and missed boundaries the navlog did not print (Nairobi, Kinshasa). A FIR that is
+  entered twice (Kuala Lumpur and Jakarta on DXB-SIN) is shown each time; a FIR with no waypoint of its own gets a "FIR boundary" row.
+- **SIGMETs are sorted by rule**: only the FIRs on your route, with "VALID" when the SIGMET is valid while you are planned in that FIR
+  (planned take-off + EET), "starts / ends n min after you leave" within an hour, and the others folded away.
+- Daily airspace reservations (AUP, TSA / TRA) are no longer shown as "conflict" NOTAMs.
+
 ## v3.5 (10 NOV 2026) – airport packs with a written brief, 110 airports, 191 FIRs
 
 1. Unzip `flightprep_app_v3.5.zip` and upload **all** files to the repository as before (same file names – nothing new to add,

@@ -1,7 +1,8 @@
 /* Flight Prep - offline app shell. Stores flight files in IndexedDB, mounts the current flight, then hands over to FPLive (fp_live.js). */
 (function () {
   'use strict';
-  var APP_VERSION = '3.5.0 (10 NOV 2026)';
+  var APP_VERSION = '3.6.0 (10 NOV 2026)';
+  window.FP_APP_VERSION = APP_VERSION;
   function $(id) { return document.getElementById(id); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -133,7 +134,7 @@
       merged.kind = rec.kind;
       return putLib(merged).then(function () {
         if (rec.kind === 'regs') { libInfo(merged); if (window.FPRegs) window.FPRegs.setLib(merged); }
-        return 'Library stored: ' + rec.title + (rec.kind === 'regs' ? ' (' + (rec.countries || []).length + ' countries). Open the REGS page.' : '. It is used by every flight from now on – reopen the flight to see it.');
+        return 'Library stored: ' + (rec.kind === 'route' ? 'route pack' + (Object.keys(rec.routes || {}).length === 1 ? ' ' : 's ') + Object.keys(rec.routes || {}).join(', ') : rec.title) + (rec.kind === 'regs' ? ' (' + (rec.countries || []).length + ' countries). Open the REGS page.' : '. It is used by every flight from now on – reopen the flight to see it.');
       });
     });
   }
@@ -277,16 +278,16 @@
   /* v3.3: the stored libraries (airport packs, FIR comms, MEL, regulations) are put into the flight before it is mounted */
   function allLibs(rec) {
     var ic = rec && window.FPLib && window.FPLib.icaos ? window.FPLib.icaos(rec) : [];
-    return Promise.all([aptsFor(ic).catch(function () { return null; })].concat(['fir', 'mel', 'regs'].map(function (k) { return getLib(k).catch(function () { return null; }); })))
-      .then(function (a) { return { apt: a[0], fir: a[1], mel: a[2], regs: a[3] }; });
+    return Promise.all([aptsFor(ic).catch(function () { return null; })].concat(['fir', 'mel', 'regs', 'route'].map(function (k) { return getLib(k).catch(function () { return null; }); })))
+      .then(function (a) { return { apt: a[0], fir: a[1], mel: a[2], regs: a[3], route: a[4] }; });   // v3.6: + route packs
   }
   function libList() {
     var el = $('lib-list'); if (!el) return;
     allLibs().then(function (L) {
-      var rows = ['apt', 'fir', 'mel', 'regs'].filter(function (k) { return L[k]; })
+      var rows = ['apt', 'route', 'fir', 'mel', 'regs'].filter(function (k) { return L[k]; })
         .map(function (k) { return '<li>' + (window.FPLib ? window.FPLib.describe(L[k]) : k) + ' <small>· ' + esc(L[k].built_utc || '') + '</small></li>'; });
       el.innerHTML = rows.length ? '<b>Stored libraries</b><ul class="libs">' + rows.join('') + '</ul>' :
-        '<b>No libraries yet.</b> Load the airport pack, FIR comms, MEL or regulations files Claude sends – they stay on the iPad and are used by every flight, including the ones the app builds from an OFP.';
+        '<b>No libraries yet.</b> Load the airport pack, route pack, FIR comms, MEL or regulations files Claude sends – they stay on the iPad and are used by every flight, including the ones the app builds from an OFP.';
     }).catch(function () { });
   }
   (CUR ? getFlight(CUR) : Promise.resolve(null)).then(function (rec) {

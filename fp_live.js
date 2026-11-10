@@ -232,7 +232,7 @@ window.FPLive = function (D) {
     var cur = curFir(e);
     document.querySelectorAll('.slop').forEach(function (s) { s.classList.toggle('curfir', !!(cur && s.dataset.fir === cur.fir)); });
   }
-  function curFir(e) { var c = null; D.firs.forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
+  function curFir(e) { var c = null; (D.firseq || D.firs).forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
 
   /* ---------- alerts strip under the clock + chimes + tab badges */
   var fired = {};
@@ -314,8 +314,8 @@ window.FPLive = function (D) {
   var TL = $('timeline'), X0 = 10, X1 = 990, X = function (m) { return X0 + (X1 - X0) * Math.max(0, Math.min(T, m)) / T; };
   if (TL) (function () {
     var s = '';
-    D.firs.forEach(function (f, k) {
-      var b = k + 1 < D.firs.length ? D.firs[k + 1].eet_min : T;
+    (D.firseq || D.firs).forEach(function (f, k) {
+      var b = k + 1 < (D.firseq || D.firs).length ? (D.firseq || D.firs)[k + 1].eet_min : T;
       s += '<rect x="' + X(f.eet_min) + '" y="8" width="' + (X(b) - X(f.eet_min)) + '" height="22" class="' + f.cls + '"/><text x="' + (X(f.eet_min) + 3) + '" y="23" class="t b">' + esc(f.fir) + '</text>';
     });
     if (D.etops) s += '<rect x="' + X(D.etops[0]) + '" y="32" width="' + (X(D.etops[1]) - X(D.etops[0])) + '" height="6" class="etops"/>';
@@ -334,14 +334,14 @@ window.FPLive = function (D) {
     // decompression DPs are planning information (user 05 NOV 26) - not in the in-flight list
     D.events.forEach(function (ev, i) { if (ev.eet_min > e && ev.kind !== 'dp') it.push({ k: 'e:' + i, t: ev.eet_min, what: ev.text, kind: ev.kind }); });
     // FIR entries: one line per boundary (the waypoint row when it is within 6 min of the FPL EET)
-    D.firs.forEach(function (f) {
+    (D.firseq || D.firs).forEach(function (f) {
       if (f.eet_min <= e || f.eet_min === 0) return;   // the departure FIR is not an 'entry'
       var row = null; D.rows.forEach(function (r) { if (!row && r.bnd && r.fir === f.fir && r.eet != null && Math.abs(r.eet - f.eet_min) <= 6) row = r; });
-      if (!row) it.push({ k: 'f:' + f.fir, t: f.eet_min, what: 'Enter ' + f.fir + ' ' + f.name + ' FIR', kind: 'fir' });
+      if (!row) it.push({ k: 'f:' + f.fir + ':' + f.eet_min, t: f.eet_min, what: 'Enter ' + f.fir + ' ' + f.name + ' FIR', kind: 'fir' });
     });
     D.rows.forEach(function (r) {
       if (r.eet == null || r.eet <= e) return;
-      var f = null; if (r.bnd) D.firs.forEach(function (x) { if (x.fir === r.fir) f = x; });
+      var f = null; if (r.bnd) (D.firseq || D.firs).forEach(function (x) { if (x.fir === r.fir && (r.fir_eet == null || x.eet_min === r.fir_eet)) f = x; });
       it.push({ k: 'w:' + r.i, t: r.eet, what: r.wpt + (r.bnd ? ' ▶ ' + r.fir + ' ' + r.firname + (f && f.eet_min !== r.eet ? ' (FIR ' + hm(f.eet_min) + ')' : '') : ''), kind: r.bnd ? 'fir' : 'wpt' });
     });
     var left = fcLeft(); if (left !== null) it.push({ k: 'fc', t: e + left / 60, what: 'Fuel check due (55-min timer)', kind: 'fc' });
@@ -375,7 +375,7 @@ window.FPLive = function (D) {
   function renderStrip(e) {
     var box = $('nowstrip'); if (!box) return;
     var eC = Math.max(0, Math.min(T, e)), inf = globe ? globe.info(eC) : null, h = '', cf = curFir(Math.max(0, e)), nf = null, air = e >= 0 && e <= T;
-    D.firs.forEach(function (f) { if (!nf && f.eet_min > Math.max(0, e)) nf = f; });
+    (D.firseq || D.firs).forEach(function (f) { if (!nf && f.eet_min > Math.max(0, e)) nf = f; });
     if (e < 0) h += chip('ON GROUND', 'T/O in ' + hm(Math.ceil(-e)) + (isPlan() ? ' (planned)' : ''), '');
     else if (e > T) h += chip('LANDED', 'planned ' + zr(T), '');
     else if (inf && inf.lvl != null) h += chip(inf.vs > 300 ? 'CLIMB' : (inf.vs < -300 ? 'DESCENT' : 'CRUISE'), (inf.lvl >= 10000 ? 'FL' + String(Math.round(inf.lvl / 100)).padStart(3, '0') : Math.round(inf.lvl / 100) * 100 + ' ft') + ' <small>plan</small>', '', true);

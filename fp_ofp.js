@@ -39,7 +39,19 @@
       cnt[w] = (cnt[w] || 0) + it.s.length;
     }
     for (k in cnt) if (cnt[k] > best) { best = cnt[k]; cw = parseFloat(k); }
-    for (p = 0; p < pages.length; p++) for (j = 0; j < pages[p].length; j++) { it = pages[p][j]; if (it.s.trim() && it.x < x0) x0 = it.x; }
+    /* v3.5.1: the left margin is where most lines START, not the left-most item of the whole document - one stray item
+       further left (a chart page, a stamp) used to push every line of the OFP to the right and the readers then found nothing */
+    var starts = {}, bestN = 0, rowMin, rk;
+    for (p = 0; p < pages.length; p++) {
+      rowMin = {};
+      for (j = 0; j < pages[p].length; j++) {
+        it = pages[p][j]; if (!it.s.trim()) continue;
+        rk = Math.round(it.y / 3) * 3;
+        if (rowMin[rk] == null || it.x < rowMin[rk]) rowMin[rk] = it.x;
+      }
+      for (rk in rowMin) { k = Math.round(rowMin[rk]); starts[k] = (starts[k] || 0) + 1; }
+    }
+    for (k in starts) if (starts[k] > bestN || (starts[k] === bestN && parseFloat(k) < x0)) { bestN = starts[k]; x0 = parseFloat(k); }
     if (x0 > 1e8) x0 = 0;
     var out = [];
     for (p = 0; p < pages.length; p++) {
@@ -123,7 +135,7 @@
     /* route string: the line(s) between ATC CLRNC and PLND FL (the label differs per station) */
     O.route = null;
     for (var i = 0; i < CL.length; i++) {
-      if (/^E\/MFT\/R\s*:|^[A-Z0-9]{4,}\s*:\s*[A-Z]{4}\//.test(CL[i])) {
+      if (/^E\/MFT\/R\s*:|^[A-Z0-9\/]{3,14}\s*:\s*[A-Z]{4}\/\S+\s/.test(CL[i])) {   // v3.6: any label ('E/MTT/R :', 'DXBSINPCI6:') in front of DEP/RWY
         var parts = [CL[i].replace(/^[^:]*:\s*/, '')];
         for (var j = i + 1; j < CL.length && j < i + 6; j++) {
           if (!CL[j].trim() || /^[A-Z][A-Z /-]*:/.test(CL[j])) break;
@@ -246,14 +258,30 @@
     /* --- weather, NOTAMs, crew alert */
     var d0 = O.day || null, date0 = O.date ? Date.UTC(O.yr, O.mon - 1, O.day) : null;
     O.wx = weather(CL, d0);
-    O.notams = notams(CL, date0);
-    O.rnotams = rnotams(CL, date0);
+    var chk = { read: 0 };
+    O.notams = notams(CL, date0, chk);
+    O.rnotams = rnotams(CL, date0, chk);
+    /* v3.6: every NOTAM header line of the bulletin must have been taken by one of the two parsers - otherwise say so */
+    O.ntcheck = { hdr: 0, read: chk.read, unknown: [] };
+    sections(CL).forEach(function (S) {
+      var n = 0; for (var q = S.start; q < S.end; q++) if (NOTAM_HDR.test(CL[q].trim())) n++;
+      if (SECT[S.title] || AREA_SEC[S.title]) O.ntcheck.hdr += n; else if (n) O.ntcheck.unknown.push(S.title + ' (' + n + ')');
+    });
     O.crew_alert = crewAlert(CL);
     O.sigmet = section(CL, /^SIGMETs:/, /^[A-Z][A-Za-z]+s:|^AIRPORTLIST|^DEPARTURE AIRPORT/);
     O.airmet = section(CL, /^AIRMETs:/, /^[A-Z][A-Za-z]+s:|^AIRPORTLIST|^DEPARTURE AIRPORT/);
 
     if (T.replace(/\s/g, '').length < 500) O.warn.push('This PDF has almost no text - it looks like a scan or a photo. The app can only read a Lido OFP PDF saved from the briefing system.');
-    else if (!O.nav.length) O.warn.push('No navlog waypoints found - is this a Lido OFP?');
+    else if (!O.nav.filter(function (n) { return n.t === 'WPT'; }).length) O.warn.push('The navlog was not read (no waypoints found) - the flight cannot be built from this file. If it is a Lido OFP, send it to Claude: the reader needs fixing.');
+    /* v3.5.1: say loudly what was not read instead of building a page with holes */
+    if (!O.fuel || !O.fuel.trip) O.note.push('FUEL BLOCK NOT READ - no fuel figures on any page.');
+    if (!O.wx || !O.wx.length) O.note.push('WEATHER SECTION NOT READ - no METAR / TAF from this OFP.');
+    if (!O.flt) O.note.push('Flight number not read from the header.');
+    if (!O.alts || !O.alts.length) O.note.push('No alternates read.');
+    if (date0 != null && O.ntcheck.hdr !== O.ntcheck.read) O.note.push('NOTAM BULLETIN: ' + O.ntcheck.hdr + ' NOTAMs printed, ' + O.ntcheck.read + ' read - ' + Math.abs(O.ntcheck.hdr - O.ntcheck.read) + ' not filed under an airport or FIR. Read the bulletin in the OFP.');
+    if (O.ntcheck.unknown.length) O.note.push('NOTAM section(s) the app does not know: ' + O.ntcheck.unknown.join(', ') + ' - read them in the OFP.');
+    if (!O.route) O.note.push('ROUTE STRING NOT READ (the line after ATC CLRNC) - runway, SID and the route comparison are missing.');
+    if (!O.fir_eet || !O.fir_eet.length) O.note.push('No FIR times (EET/) read from the flight plan - FIR boundaries follow the navlog lines and may be late.');
     if (!O.dep || !O.dest) O.warn.push('Departure / destination not found.');
     if (!O.date) O.note.push('No flight date in the header - NOTAM and TAF times cannot be placed on the timeline.');
     if (!O.coords || !Object.keys(O.coords).length) O.note.push('No wind-chart coordinates found - all map positions are estimated from the times.');
@@ -338,31 +366,54 @@
   }
 
   var NOTAM_HDR = /^([A-Z0-9]{2,4}\d{1,4}\/\d{2})(?:\s+-\s+[A-Z ]+?)?\s+VALID:\s+(\d{10})\s+-\s+(\d{10}|UFN|PERM)(?:\s+(EST))?/;
-  var SECT = { 'DEPARTURE AIRPORT': 'DEP', 'DESTINATION AIRPORT': 'DEST', 'DESTINATION ALTERNATE(S)': 'ALTN', 'ETOPS SUITABLE ENROUTE AIRPORT(S)': 'ETOPS', 'ENROUTE AIRPORT(S)': 'ENR' };
+  var SECT = { 'DEPARTURE AIRPORT': 'DEP', 'DESTINATION AIRPORT': 'DEST', 'DESTINATION ALTERNATE(S)': 'ALTN', 'ETOPS SUITABLE ENROUTE AIRPORT(S)': 'ETOPS', 'ENROUTE AIRPORT(S)': 'ENR',
+    'ESCAPE AIRPORT(S)': 'ENR', 'FUEL ENROUTE AIRPORT': 'ENR', 'FUEL ENROUTE AIRPORT(S)': 'ENR' };   // v3.6: + escape and fuel en-route airports (shown with the en-route airports)
+  function ruleNext(L, i) { for (var q = i + 1; q < L.length && q < i + 8; q++) if (L[q].trim()) return /^-{5,}$/.test(L[q].trim()); return false; }   // the next non-blank line is a rule of '-' (a page break may sit in between)
   function vmin(s, date0) {
     var y = 2000 + +s.slice(0, 2), mo = +s.slice(2, 4) - 1, d = +s.slice(4, 6), h = +s.slice(6, 8), mi = +s.slice(8, 10);
     return Math.round((Date.UTC(y, mo, d, h, mi) - date0) / 60000);
   }
-  function notams(L, date0) {
-    var out = [], role = null, apt = null, cat = '', cur = null;
-    if (date0 == null) return out;
+  /* v3.6: the sections of the Lido NOTAM bulletin. A title stands between two rules of '='; when a page break falls inside the
+     header, blank lines sit between the title and the closing rule (EK348: DESTINATION AIRPORT was missed and its NOTAMs were
+     filed under the departure). One walk finds every section, so the airport and the area parsers cannot disagree. */
+  function sections(L) {
+    var out = [];
     for (var i = 0; i < L.length; i++) {
-      var l = L[i], st = l.trim(), nx = (L[i + 1] || '').trim();
-      if (SECT[st] && /^===/.test(nx)) { role = SECT[st]; continue; }
-      if (['AREA ENROUTE DEPARTURE - DESTINATION', 'EXTENDED AREA AROUND DESTINATION', 'CREW BULLETIN'].indexOf(st) >= 0 && /^===/.test(nx)) { role = null; continue; }
-      if (role === null) continue;
-      var m = /^([A-Z]{4})\s*\/([A-Z0-9]{3})\s+(.*?)(?:\s+- DETAILED INFO)?$/.exec(st);
-      if (m && /^---/.test(nx)) { apt = m[1]; cur = null; continue; }
-      var c = /^\++\s*([A-Z /]+?)\s*\++$/.exec(st);
-      if (c) { cat = c[1].trim(); cur = null; continue; }
-      var h = NOTAM_HDR.exec(st);
-      if (h && apt) {
-        cur = { icao: apt, role: role, id: h[1], cat: cat, a: vmin(h[2], date0), b: (h[3] === 'UFN' || h[3] === 'PERM') ? null : vmin(h[3], date0),
-          bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', est: !!h[4], x: [] };
-        out.push(cur); continue;
+      var st = L[i].trim();
+      if (!/^={5,}/.test(st)) continue;
+      if (/END OF LIDO-NOTAM-BULLETIN/.test(st)) { if (out.length && out[out.length - 1].end > i) out[out.length - 1].end = i; continue; }
+      if (!/^={5,}$/.test(st)) continue;
+      var j = i + 1; while (j < L.length && !L[j].trim()) j++;
+      if (j >= L.length || j > i + 9 || /^={5,}/.test(L[j].trim())) continue;
+      var k = j + 1; while (k < L.length && k < j + 9 && !L[k].trim()) k++;
+      if (k < L.length && /^={5,}$/.test(L[k].trim())) {
+        if (out.length && out[out.length - 1].end > i) out[out.length - 1].end = i;
+        out.push({ title: L[j].trim(), start: k + 1, end: L.length }); i = k;
       }
-      if (cur && st && !/^===/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
     }
+    return out;
+  }
+  function notams(L, date0, chk) {
+    var out = [];
+    if (date0 == null) return out;
+    sections(L).forEach(function (S) {
+      var role = SECT[S.title], apt = null, cat = '', cur = null;
+      if (!role) return;
+      for (var i = S.start; i < S.end; i++) {
+        var l = L[i], st = l.trim();
+        var m = /^([A-Z]{4})\s*\/([A-Z0-9]{3})\s+(.*?)(?:\s+- DETAILED INFO)?$/.exec(st);
+        if (m && ruleNext(L, i)) { apt = m[1]; cur = null; continue; }
+        var c = /^\++\s*([A-Z /]+?)\s*\++$/.exec(st);
+        if (c) { cat = c[1].trim(); cur = null; continue; }
+        var h = NOTAM_HDR.exec(st);
+        if (h && apt) {
+          cur = { icao: apt, role: role, id: h[1], cat: cat, a: vmin(h[2], date0), b: (h[3] === 'UFN' || h[3] === 'PERM') ? null : vmin(h[3], date0),
+            bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', est: !!h[4], x: [] };
+          out.push(cur); if (chk) chk.read++; continue;
+        }
+        if (cur && st && !/^===/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
+      }
+    });
     return fin(out);
   }
   /* pasted text loses the indentation the Lido PDF has, so a NOTAM body line is also accepted when it is
@@ -379,26 +430,42 @@
     });
     return out.filter(function (n) { return n.x; });
   }
-  function rnotams(L, date0) {
-    var out = [], on = false, fir = null, cur = null;
+  /* v3.6: ALL area sections of the Lido NOTAM bulletin, not only 'AREA ENROUTE DEPARTURE - DESTINATION'. The FIRs next to the
+     departure (Muscat, Emirates) are printed under 'EXTENDED AREA AROUND DEPARTURE', and some blocks are named after a waypoint
+     ('TARDI     TARDI') - both were skipped before. sec says which section, fir is the block code (FIR designator or waypoint). */
+  var AREA_SEC = { 'EXTENDED AREA AROUND DEPARTURE': 'dep', 'AREA ENROUTE DEPARTURE - DESTINATION': 'enr', 'AREA ENROUTE DESTINATION - DESTINATION ALTERNATE(S)': 'altn',
+    'EXTENDED AREA AROUND DESTINATION': 'dest', 'EXTENDED AREA AROUND DESTINATION ALTERNATE AIRPORT(S)': 'altn' };
+  function rnotams(L, date0, chk) {
+    var out = [], seen = {};
     if (date0 == null) return out;
-    for (var i = 0; i < L.length; i++) {
-      var l = L[i], st = l.trim(), nx = (L[i + 1] || '').trim();
-      if (st === 'AREA ENROUTE DEPARTURE - DESTINATION') { on = true; continue; }
-      if (!on) continue;
-      if (/^===/.test(nx) && st && st !== 'AREA ENROUTE DEPARTURE - DESTINATION') break;
-      var m = /^([A-Z]{4})\s{2,}(.+)$/.exec(st);
-      if (m && /^---/.test(nx)) { fir = m[1]; cur = null; continue; }
-      var h = NOTAM_HDR.exec(st);
-      if (h && fir) {
-        cur = { fir: fir, id: h[1], a: vmin(h[2], date0), b: (h[3] === 'UFN' || h[3] === 'PERM') ? null : vmin(h[3], date0), bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', x: [] };
-        out.push(cur); continue;
+    sections(L).forEach(function (S) {
+      var sec = AREA_SEC[S.title], fir = null, name = '', cur = null;
+      if (!sec) return;
+      for (var i = S.start; i < S.end; i++) {
+        var l = L[i], st = l.trim();
+        if (st && !/^-{3,}$/.test(st) && !NOTAM_HDR.test(st) && ruleNext(L, i)) {
+          /* block headers: 'OIIX      TEHRAN FIR', 'TARDI     TARDI', 'VAVIM/GESAXT636', 'D24 BARGAT AL HAGAT', 'WI A4078/26', 'R30/PEKANBARU' */
+          var m = /^([A-Z0-9]{2,6})\s{2,}(\S.*)$/.exec(st);
+          if (m) { fir = m[1]; name = m[2].replace(/\s+(FIR|UIR|FIR\/UIR)$/, ''); if (name === fir) name = ''; }
+          else { fir = st.replace(/\s+/g, ' '); name = ''; }
+          cur = null; continue;
+        }
+        var h = NOTAM_HDR.exec(st);
+        if (h && fir) {
+          var key = fir + ' ' + h[1];
+          if (chk) chk.read++;
+          if (seen[key]) { cur = null; if (seen[key].secs.indexOf(sec) < 0) seen[key].secs.push(sec); continue; }      // the same NOTAM printed again (FIR + UIR block, or another section)
+          cur = { fir: fir, name: name, sec: sec, secs: [sec], id: h[1], a: vmin(h[2], date0), b: (h[3] === 'UFN' || h[3] === 'PERM') ? null : vmin(h[3], date0), bt: (h[3] === 'UFN' || h[3] === 'PERM') ? h[3] : '', x: [] };
+          seen[key] = cur; out.push(cur); continue;
+        }
+        if (cur && st && !/^---/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
       }
-      if (cur && st && !/^---/.test(st) && (/^\s\s/.test(l) || loose(st))) cur.x.push(st);
-    }
+    });
     out = fin(out);
     out.forEach(function (n) {
-      n.kind = /SECURITY|CONFLICT|PROHIBITED|ARMED|MILITARY|HOSTIL|UNAUTHORI[SZ]ED FLIGHTS|SOMALILAND/.test(n.x) ? 'conflict' : (/GNSS|\bGPS\b/.test(n.x) ? 'gnss' : 'info');
+      /* v3.5.1: daily airspace reservations (AUP, TSA / TRA) are routine - they are not a 'conflict' because the word MILITARY is in them */
+      n.kind = /AIRSPACE USE PLAN|\(AUP\)|\bTSA\/TRA\b/.test(n.x.slice(0, 160)) ? 'airspace' :
+        (/SECURITY|CONFLICT|PROHIBITED|ARMED|MILITARY|HOSTIL|UNAUTHORI[SZ]ED FLIGHTS|SOMALILAND/.test(n.x) ? 'conflict' : (/GNSS|\bGPS\b/.test(n.x) ? 'gnss' : 'info'));
     });
     return out;
   }

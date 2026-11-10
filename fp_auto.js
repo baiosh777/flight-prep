@@ -111,7 +111,19 @@
       firs.push({ fir: s.fir, name: firnames[s.fir] || firName(base, s.fir), eet_min: s.min, cls: 'fir' + (firs.length % 8) });
     });
     if (!firs.length) firs.push({ fir: '----', name: '', eet_min: 0, cls: 'fir0' });
-    function firAt(e) { var c = firs[0]; firs.forEach(function (f) { if (f.eet_min <= e) c = f; }); return c; }
+    /* v3.5.1: the FIR sequence in time order WITH re-entries (EK348: WMFC - WIIF - WMFC - WIIF - WSJC). The flight-plan EET list
+       is the time of each boundary; the navlog only prints a line near it, sometimes after the boundary waypoint. */
+    var firseq = [];
+    if (firs.length && firs[0].eet_min === 0) firseq.push(firs[0]);
+    seq.forEach(function (s) {
+      var u = firs.filter(function (f) { return f.fir === s.fir; })[0];
+      var last = firseq[firseq.length - 1];
+      if (last && last.fir === s.fir) return;
+      firseq.push({ fir: s.fir, name: u ? u.name : (firnames[s.fir] || firName(base, s.fir)), eet_min: s.min, cls: u ? u.cls : 'fir0' });
+    });
+    if (!firseq.length) firseq = firs.slice();
+    function segAt(e) { var c = 0; firseq.forEach(function (f, i) { if (f.eet_min <= e) c = i; }); return c; }
+    function firAt(e) { return firseq[segAt(e)]; }
 
     /* ---- coordinates: wind-chart points, ETOPS points, airports; the rest interpolated by time */
     var CO = {}, k;
@@ -144,6 +156,7 @@
     var dep_rwy = (O.route || '').match(new RegExp('^' + (O.dep || '....') + '\\/(\\S+)'));
     dep_rwy = dep_rwy ? dep_rwy[1] : null;
     var sid = (O.route || '').split(/\s+/)[1] || null;
+    if (sid === 'DCT') sid = null;                            // v3.6: 'OMDB/30R DCT ANVIX' has no SID in the route string
     var arr_rwy = (O.route || '').match(new RegExp((O.dest || '....') + '\\/(\\S+)\\s*$'));
     arr_rwy = arr_rwy ? arr_rwy[1] : null;
     var f0 = firs[0];
@@ -151,21 +164,66 @@
       call: '<p class="note">No comms table loaded. The OFP has no frequencies - use the charts / AOI, or load a prep file.</p>',
       cpdlc: '', special: (O.fuel.taxi && O.fuel.taxi.min != null ? 'Taxi ' + O.fuel.taxi.min + ' min / ' + t1(O.fuel.taxi.kg) : '-'),
       threat: dep_rwy ? 'Planned RWY ' + esc(dep_rwy) + (sid ? ' · ' + esc(sid) : '') : '-', divert: '-', mora: null, fmin: null, fplan: null, fc: f0.cls });
+    var lastSeg = 0, useEet = O.fir_eet && O.fir_eet.length > 0;
+    function synRow(k) {   // a FIR with no waypoint of its own on the navlog: a row at the flight-plan time, so the comms change is not lost
+      var f = firseq[k];
+      rows.push({ i: n++, eet: f.eet_min, label: null, wpt: 'FIR boundary', fir: f.fir, firname: f.name, bnd: true, fir_eet: f.eet_min, syn: true,
+        call: '<div class="cm"><div class="cmn">' + esc(f.fir) + ' ' + esc(f.name) + ' - no comms table loaded (OFP only).</div></div>',
+        cpdlc: '', special: 'No waypoint in this FIR on the navlog - time from the flight-plan EET', threat: '-', divert: '-', mora: null, fmin: null, fplan: null, fc: f.cls });
+    }
     wp.forEach(function (w) {
-      var fr = w.fir ? { fir: w.fir, name: w.firname || firnames[w.fir] || '', cls: (firs.filter(function (f) { return f.fir === w.fir; })[0] || f0).cls } : firAt(w.eet == null ? 0 : w.eet);
-      var bnd = fr.fir !== lastFir; lastFir = fr.fir;
+      var fr, bnd, sg = null;
+      if (useEet && w.eet != null) {
+        sg = segAt(w.eet);
+        for (var q = lastSeg + 1; q < sg; q++) synRow(q);
+        fr = firseq[sg]; bnd = sg !== lastSeg; lastSeg = sg;
+      } else {
+        fr = w.fir ? { fir: w.fir, name: w.firname || firnames[w.fir] || '', cls: (firs.filter(function (f) { return f.fir === w.fir; })[0] || f0).cls } : firAt(w.eet == null ? 0 : w.eet);
+        bnd = fr.fir !== lastFir;
+      }
+      lastFir = fr.fir;
       var sp = [], th = [];
       O.etops_pts.forEach(function (p) { if (p.min === w.eet) sp.push('<b>ETOPS ' + (p.id.indexOf('ENTRY') === 0 ? 'entry' : 'exit') + '</b>' + (O.etops_min ? ' (' + O.etops_min + ' min rule)' : '')); });
       O.etps.forEach(function (p) {
-        if (Math.abs((p.min || -1) - (w.eet == null ? -99 : w.eet)) > 1) return;
+        /* v3.6: the navlog row named after the point ('ETP1-2D') carries it; without such a row, the waypoint within a minute */
+        var named = wp.some(function (x) { return x.wpt.indexOf(p.id) === 0; });
+        if (named ? w.wpt.indexOf(p.id) !== 0 : Math.abs((p.min || -1) - (w.eet == null ? -99 : w.eet)) > 1) return;
         sp.push('<b>' + p.id + '</b> ' + hm(p.min) + ' → ' + esc(p.apt) + ': critical fuel <b>' + p.crit.toFixed(1) + ' t</b> vs ' + p.avail.toFixed(1) + ' t available');
         if (p.crit > p.avail) th.push('<b>' + p.id + ': critical fuel above the planned fuel</b> - check with dispatch');
       });
       if (w.mora != null && w.mora >= 8000) th.push('<b>MORA ' + w.mora + ' ft</b>');
-      rows.push({ i: n++, eet: w.eet, label: null, wpt: w.wpt, fir: fr.fir, firname: fr.name, bnd: bnd,
+      rows.push({ i: n++, eet: w.eet, label: null, wpt: w.wpt, fir: fr.fir, firname: fr.name, bnd: bnd, fir_eet: bnd && sg != null ? firseq[sg].eet_min : null,
         call: bnd ? '<div class="cm"><div class="cmn">' + esc(fr.fir) + ' ' + esc(fr.name) + ' - no comms table loaded (OFP only).</div></div>' : '',
         cpdlc: '', special: sp.join(' · ') || '-', threat: th.join(' · ') || '-', divert: '-',
-        mora: w.mora, fmin: w.fplan, fplan: w.fplan == null ? null : Math.round((w.fplan + extra / 1000) * 10) / 10, fc: fr.cls });
+        mora: w.mora, fmin: w.fplan, fplan: w.fplan == null ? null : Math.round((w.fplan + extra / 1000) * 10) / 10, fc: fr.cls, aw: w.aw || '' });
+    });
+
+    /* ---- v3.6: the area NOTAMs of the OFP on their rows - a block named after a waypoint on that waypoint, GNSS and security / conflict
+       NOTAMs of a route FIR on the row where the FIR starts. 'on' = the block is a FIR or a waypoint of this route. */
+    var onFir = {}, onWp = {}, doneF = {};
+    firs.forEach(function (f) { onFir[f.fir] = 1; });
+    wp.forEach(function (w) { onWp[w.wpt.replace(/\/.*$/, '')] = 1; });
+    function blkToks(code) { return String(code).split(/[\/ ]/).filter(Boolean).map(function (x) { return onWp[x] ? x : x.slice(0, 5); }); }
+    function blockOn(code) {
+      if (onFir[code] || onWp[code]) return true;
+      var m = /^([A-Z]{2}) [A-Z]\d+\/\d{2}$/.exec(code);                    // 'WI A4078/26': filed under the country prefix of a FIR
+      if (m) return firs.some(function (f) { return f.fir.slice(0, 2) === m[1]; });
+      if (/^[DRP]\d+[ \/]/.test(code)) return false;                         // 'D24 BARGAT AL HAGAT', 'R30/PEKANBARU': a danger / restricted area near an airport
+      return blkToks(code).some(function (x) { return onWp[x]; });            // 'VAVIM/GESAXT636': an airway segment between two waypoints
+    }
+    O.rnotams.forEach(function (t) { t.on = blockOn(t.fir) || (t.sec === 'enr' && t.kind === 'conflict'); });   // a security warning Lido printed in the en-route section is never folded away
+    function addTh(r, h) { r.threat = r.threat && r.threat !== '-' ? r.threat + ' · ' + h : h; }
+    function idl(l) { return l.slice(0, 3).map(function (t) { return esc(t.id); }).join(', ') + (l.length > 3 ? ' +' + (l.length - 3) : ''); }
+    rows.forEach(function (r) {
+      var nm = String(r.wpt).replace(/\/.*$/, '');
+      var wn = onFir[nm] || r.i === 0 ? [] : O.rnotams.filter(function (t) { return !t.rowed && !onFir[t.fir] && !/^[A-Z]{2} [A-Z]\d/.test(t.fir) && (t.fir === nm || blkToks(t.fir).indexOf(nm) >= 0); });
+      if (wn.length) { wn.forEach(function (t) { t.rowed = 1; }); addTh(r, '<b>NOTAM ' + esc(wn[0].fir === nm ? 'at ' + nm : wn[0].fir) + '</b> ' + idl(wn) + ': ' + esc(wn[0].x.slice(0, 80)) + ' …'); }
+      if ((r.bnd || r.i === 0) && !doneF[r.fir]) {
+        doneF[r.fir] = 1;
+        var g = O.rnotams.filter(function (t) { return t.fir === r.fir && t.kind === 'gnss'; }), c = O.rnotams.filter(function (t) { return t.fir === r.fir && t.kind === 'conflict'; });
+        if (g.length) addTh(r, '<b>GNSS NOTAM</b> ' + idl(g) + ': ' + esc(g[0].x.slice(0, 70)) + ' …');
+        if (c.length) addTh(r, '<b>Security / conflict NOTAM</b> ' + idl(c) + ' – WX · NOTAM page');
+      }
     });
 
     /* ---- MORA, levels, events, deadlines */
@@ -183,13 +241,20 @@
     if (ent) ev.push({ eet_min: ent.min, kind: 'etops', text: 'ETOPS entry' + (O.etops_apt[0] ? ' (' + O.etops_apt[0] + ')' : '') + (O.etops_min ? ' - ' + O.etops_min + ' min rule' : '') });
     O.etps.forEach(function (p) { ev.push({ eet_min: p.min, kind: 'etops', text: p.id + ' ' + hm(p.min) + ' → ' + p.apt + ' (critical fuel ' + p.crit.toFixed(1) + ' t, planned ' + p.avail.toFixed(1) + ' t)' }); });
     if (exi) ev.push({ eet_min: exi.min, kind: 'etops', text: 'ETOPS exit' + (O.etops_apt[1] ? ' (' + O.etops_apt[1] + ')' : '') });
+    /* v3.6: PLND FL '330 ELSAR/350' - each step is a climb or a descent against the level before it, and it is written on its waypoint row */
     var steps = (O.plnd_fl || '').match(/([A-Z0-9]+)\/(\d{3})/g) || [];
-    if (steps.length) {
-      var stx = steps.map(function (s) { var p = s.split('/'); return p[0] + ' FL' + p[1]; });
-      var first = steps[0].split('/')[0], fe = null;
-      wp.forEach(function (w) { if (fe == null && w.wpt === first) fe = w.eet; });
-      ev.push({ eet_min: fe == null ? Math.max(0, trip - 40) : fe, kind: 'descent', text: 'Planned descent: ' + stx.join(', ') });
-    }
+    var lvl0 = parseInt(((O.plnd_fl || '').match(/^\s*(\d{3})\b/) || [])[1] || cruise || '0', 10);
+    steps.forEach(function (st) {
+      var p = st.split('/'), to = parseInt(p[1], 10), fe = null, up = lvl0 && to > lvl0;
+      wp.forEach(function (w) { if (fe == null && w.wpt === p[0]) fe = w.eet; });
+      ev.push({ eet_min: fe == null ? Math.max(0, trip - 40) : fe, kind: up ? 'level' : 'descent', text: (up ? 'Step climb' : 'Planned descent') + ' FL' + p[1] + ' at ' + p[0] + ' (OFP PLND FL)' });
+      rows.forEach(function (r) {
+        if (r.wpt !== p[0]) return;
+        var tx = '<b>' + (up ? 'Step climb' : 'Descent') + ' FL' + p[1] + '</b> (OFP)';
+        r.special = r.special && r.special !== '-' ? r.special + ' · ' + tx : tx;
+      });
+      lvl0 = to;
+    });
     var tod = null;
     wp.forEach(function (w) { if (/^TOD/.test(w.wpt) && w.eet != null) tod = w.eet; });
     if (tod != null) ev.push({ eet_min: tod, kind: 'descent', text: 'TOD' + (arr_rwy ? ' - arrival ' + arr_rwy : '') });
@@ -222,6 +287,16 @@
     });
     if (chain.length) chain[chain.length - 1].b = Math.max(chain[chain.length - 1].b, trip);
     chain.forEach(function (c) { var w = O.wx.filter(function (x) { return x.icao === c.icao; })[0]; c.wx = wxShort(w); });
+    /* v3.6: the diversion column - the two nearest airports of the OFP's own list at each waypoint (great circle, NM). A distance, not a judgement. */
+    var ptBy = {};
+    pts.forEach(function (p) { if (p.e != null && ptBy[p.n + '@' + p.e] == null) ptBy[p.n + '@' + p.e] = p; });
+    rows.forEach(function (r) {
+      var p = r.eet == null ? null : ptBy[r.wpt + '@' + r.eet];
+      if (!p || !CA.length) return;
+      var near = CA.map(function (a) { return { icao: a.icao, nm: Math.round(gc(p.ll, a.ll)) }; }).sort(function (a, b) { return a.nm - b.nm; }).slice(0, 2);
+      r.div2 = near;
+      r.divert = near.map(function (a, i) { return (i ? '' : '<b>') + esc(a.icao) + (i ? '' : '</b>') + ' ' + a.nm; }).join(' / ');
+    });
 
     /* ---- geography */
     var rbb = bbox(pts.map(function (p) { return p.ll; }));
@@ -281,7 +356,7 @@
          both stay in FLIGHTS and you pick the one you want */
       flight: { id: (O.flt || 'FLT') + '-' + (O.date || '') + '-auto', flight: O.flt, callsign: O.csEK, dep: O.dep, arr: O.dest, dep_iata: O.dep_iata, arr_iata: O.dest_iata,
         to_plan: O.to, trip: trip, arr_off: null, std: O.std == null ? '' : ('0' + Math.floor(O.std / 60)).slice(-2) + ':' + ('0' + (O.std % 60)).slice(-2) },
-      rows: rows, deadlines: [], events: ev, firs: firs, chain: chain, mora: mora, route: route.map(function (r) { return { n: r.n, e: r.e }; }),
+      rows: rows, deadlines: [], events: ev, firs: firs, firseq: firseq, chain: chain, mora: mora, route: route.map(function (r) { return { n: r.n, e: r.e }; }),
       etops: (ent && exi) ? [ent.min, exi.min] : null,
       etops_info: (ent || O.etps.length) ? { rule_min: O.etops_min ? parseInt(O.etops_min, 10) : null,
         entry: ent ? { eet_min: ent.min, airport: O.etops_apt[0] || '' } : null, exit: exi ? { eet_min: exi.min, airport: O.etops_apt[1] || '' } : null,
@@ -294,6 +369,7 @@
       firproc: {}, firproc_src: '', mel: {}, mel_ofp: [], aptinfo: {}, divinfo: {}, divinfo_src: '', doclinks: null,
       wx: O.wx, notams: O.notams, rnotams: O.rnotams, crew_alert: O.crew_alert, dispatch: O.disp,
       notam_flags: flags, notam_notes: notes,
+      apts: CA.map(function (a) { return { icao: a.icao, cls: a.cls, note: a.note }; }), ofp_route: O.route || '',
       auto: { built: new Date().toISOString().slice(0, 16).replace('T', ' ') + 'Z', ofp: O.ofpno, src: 'OFP ' + (O.ofpno || '') + ' read in the app', warn: O.warn, note: O.note || [],
         interp: route.filter(function (r) { return r.note; }).length }
     };
@@ -334,9 +410,53 @@
     });
     return h;
   }
+  /* v3.5.1: the SIGMETs of the OFP sorted by rule - which FIRs are on the route, and is the SIGMET valid while the flight is in that FIR.
+     Times: planned take-off + the flight-plan EET of each FIR. The SIGMET area itself is not compared with the track. */
+  function sigRoute(O, D) {
+    var blocks = [], cur = null;
+    String(O.sigmet || '').split('\n').forEach(function (l) {
+      var m = /^\s*([A-Z]{4})\s+([A-Z][A-Z .'\/-]+?)\s+(?:OCEANIC\s+)?(?:FIR|UIR|FIR\/UIR|CTA|FIC)\s*$/.exec(l);
+      if (m && !/SIGMET/.test(l)) { cur = { fir: m[1], name: m[2], lines: [] }; blocks.push(cur); return; }
+      if (/^\s*[A-Z][A-Za-z ]+(SIGMETs|Advisory):\s*$/.test(l)) { cur = null; return; }
+      if (cur) cur.lines.push(l);
+    });
+    var seq = D.firseq || D.firs || [], trip = (D.flight || {}).trip || 0, to = O.to, day = O.date ? +O.date.slice(8, 10) : null;
+    function abs(ddhhmm) {
+      if (day == null) return null;
+      var off = +ddhhmm.slice(0, 2) - day; if (off < -15) off += 30; if (off > 15) off -= 30;
+      return off * 1440 + (+ddhhmm.slice(2, 4)) * 60 + (+ddhhmm.slice(4, 6));
+    }
+    var on = [], off = [];
+    blocks.forEach(function (b) {
+      var text = b.lines.join('\n').replace(/\s+$/, ''); if (!text.trim()) return;
+      var wins = [];
+      seq.forEach(function (f, i) { if (f.fir === b.fir) wins.push([f.eet_min, i + 1 < seq.length ? seq[i + 1].eet_min : trip]); });
+      var items = [], parts = text.split(/\n(?=\s*W[SCV]\s+SIGMET)/);
+      parts.forEach(function (pt) {
+        var m = /SIGMET\s+(\S+)\s+VALID\s+(\d{6})\/(\d{6})/.exec(pt); if (!m) return;
+        var flat = pt.replace(/\s+/g, ' ');
+        var ph = (flat.match(/\b(EMBD TSGR|EMBD TS|OBSC TSGR|OBSC TS|FRQ TSGR|FRQ TS|SQL TSGR|SQL TS|SEV TURB|SEV ICE|SEV MTW|HVY DS|HVY SS|VA ERUPTION|VA CLD|TC [A-Z]+|RDOACT CLD)\b/) || [''])[0];
+        var top = (flat.match(/\bTOP (?:ABV )?FL\d{3}\b/) || [''])[0], mov = (flat.match(/\b(MOV [A-Z]{1,3}(?: \d{1,2}KT)?|STNR)\b/) || [''])[0];
+        var a = abs(m[2]), z = abs(m[3]), act = null, near = null;
+        if (to != null && a != null && wins.length) {
+          act = wins.some(function (w) { return a <= to + w[1] && z >= to + w[0]; });
+          if (!act) wins.forEach(function (w) {            // within an hour of the time in the FIR - a delay makes it valid
+            var g = a > to + w[1] ? a - (to + w[1]) : (to + w[0]) - z;
+            if (g >= 0 && g <= 60 && (near == null || g < near.g)) near = { g: g, after: a > to + w[1] };
+          });
+        }
+        items.push({ id: m[1], from: m[2], to: m[3], ph: ph, top: top, mov: mov, active: act, near: near });
+      });
+      (wins.length ? on : off).push({ fir: b.fir, name: b.name, items: items, wins: wins, text: text });
+    });
+    return { on: on, off: off, n: blocks.length };
+  }
+  function cap(x) { return String(x || '').toLowerCase().replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); }); }
+  function zhm(ddhhmm) { return ddhhmm.slice(2, 6) + 'Z'; }
   function autoBar(O) {
     return '<div class="msg autobar" style="margin:0 0 10px"><b>Auto-built from OFP ' + esc(O.ofpno || '?') + '.</b> Everything on this page is taken from the OFP read in the app. ' +
-      'No CCI / AOI / CRAR / MEL / charts and no comms tables - those come from a prep file or the libraries.</div>';
+      'No CCI / AOI / CRAR / MEL / charts and no comms tables - those come from a prep file or the libraries.</div>' +
+      ((O.note || []).length ? '<div class="banner red"><b>Check this OFP by hand:</b> ' + (O.note || []).map(esc).join(' ') + '</div>' : '');
   }
   function views(O, D, X) {
     var V = {}, i;
@@ -381,10 +501,17 @@
       if (s) hi.push([w.icao + ' (' + (w.role === 'ETOPS' ? 'ETOPS' : 'alternate') + ')', s, 'tem']);
     });
     if (X.maxm && X.maxm.mora >= 8000) hi.push(['Terrain', 'MORA ' + X.maxm.mora + ' ft at ' + X.maxm.name + ' (' + hm(X.maxm.eet_min) + ')', 'waypoints']);
-    if (O.sigmet) hi.push(['SIGMET', O.sigmet.replace(/\s+/g, ' ').slice(0, 200), 'tem']);
+    var SG = sigRoute(O, D), sgAct = 0;
+    SG.on.forEach(function (b) {
+      var act = b.items.filter(function (i) { return i.active || i.near; }); if (!act.length) return; sgAct++;
+      hi.push(['SIGMET ' + b.fir, cap(b.name) + ': ' + act.map(function (i) { return [i.ph, i.top, i.mov].filter(Boolean).join(' ') + ' (valid ' + zhm(i.from) + '-' + zhm(i.to) + (i.active ? '' : ', ' + i.near.g + ' min ' + (i.near.after ? 'after you leave' : 'before you enter')) + ')'; }).join('; ') +
+        ' – you are in this FIR ' + b.wins.map(function (w) { return zt(O.to + w[0]) + '-' + zt(O.to + w[1]); }).join(' and '), 'tem']);
+    });
+    if (O.sigmet && !sgAct && (SG.on.length || SG.off.length)) hi.push(['SIGMET', 'None valid for the FIRs on your route at your times (' + (SG.on.length + SG.off.length) + ' FIRs with SIGMETs in the OFP)', 'tem']);
+    else if (O.sigmet && !SG.n) hi.push(['SIGMET', O.sigmet.replace(/\s+/g, ' ').slice(0, 200), 'tem']);
     var nn = Object.keys(D.notam_flags).length;
     if (nn) hi.push(['NOTAMs', nn + ' NOTAMs are new or short-duration - see the WX · NOTAM page', 'wxnotam']);
-    O.rnotams.forEach(function (t) { if (t.kind === 'conflict') hi.push(['Enroute ' + t.fir, t.x.slice(0, 150), 'wxnotam']); });
+    O.rnotams.forEach(function (t) { if (t.on && (t.kind === 'conflict' || t.kind === 'gnss')) hi.push([(t.kind === 'gnss' ? 'GNSS ' : 'Enroute ') + t.fir, t.x.slice(0, 150), 'wxnotam']); });   // v3.6: only FIRs / points of this route
     (O.crew_alert || []).slice(0, 3).forEach(function (c) {
       hi.push(['Crew alert ' + c.id, (c.title.replace(/^COMPANY NOTAM\s*-\s*/i, '') + (c.x ? ' – ' + c.x : '')).slice(0, 150), 'dep']);
     });
@@ -392,8 +519,10 @@
     h += '<h2>From the OFP <small class="dh2s">rule-based, not a judgement</small></h2><ul class="dthr">';
     if (!hi.length) h += '<li><span class="dtx">Nothing flagged by the rules: no crew alert, no new or short NOTAM, no critical-fuel shortfall, no significant forecast at take-off or ETA.</span></li>';
     var GOL = { wxnotam: 'WX · NOTAM', waypoints: 'WPTS', dep: 'DEP', arr: 'ARR', tem: 'TEM', 'route-map': 'MAP' };
-    hi.slice(0, 10).forEach(function (x) { h += '<li><b class="dtag">' + esc(x[0]) + '</b><span class="dtx">' + esc(x[1]) + '</span><a class="dgo" href="#' + x[2] + '">' + esc(GOL[x[2]] || x[2].toUpperCase()) + ' ›</a></li>'; });
-    h += '</ul>' + autoBar(O);
+    /* v3.6: nothing is cut off silently - up to 16 lines, then a line that says how many more there are */
+    hi.slice(0, 16).forEach(function (x) { h += '<li><b class="dtag">' + esc(x[0]) + '</b><span class="dtx">' + esc(x[1]) + '</span><a class="dgo" href="#' + x[2] + '">' + esc(GOL[x[2]] || x[2].toUpperCase()) + ' ›</a></li>'; });
+    if (hi.length > 16) h += '<li><b class="dtag">More</b><span class="dtx">' + (hi.length - 16) + ' more flags: ' + esc(hi.slice(16).map(function (x) { return x[0]; }).join(', ')) + '</span><a class="dgo" href="#tem">TEM ›</a></li>';
+    h += '</ul><!--cov-->' + autoBar(O);   // v3.6: FPLib puts the coverage block at the marker
     V.dash = h;
 
     /* ---------- DEPARTURE */
@@ -429,7 +558,7 @@
     V.arr = h;
 
     /* ---------- TEM (facts only: what the OFP says, organised) */
-    h = '<h1 class="pt">Threats from the OFP</h1>' + autoBar(O);
+    h = '<h1 class="pt">Threats from the OFP</h1>' + autoBar(O) + '<!--rp-->';   // v3.6: route-pack threat / mitigation blocks go here
     h += tafTable(dep.concat(dest), 'Weather at departure and destination', 'OFP weather section');
     if (etw.length) h += tafTable(etw, 'ETOPS airports', 'weather-permissible airports in the OFP');
     if (O.etops_wx.length) {
@@ -452,11 +581,43 @@
       h += '</ul>';
     }
     if (O.rnotams.length) {
-      h += '<div class="bar"><span>Enroute NOTAMs by FIR</span><small>OFP area section</small></div><ul class="gpl">';
-      O.rnotams.forEach(function (t) { h += '<li><b>' + esc(t.fir) + ' ' + esc(t.id) + '</b>' + (t.kind !== 'info' ? ' <b class="bad">' + t.kind + '</b>' : '') + ' – ' + esc(t.x.slice(0, 300)) + '</li>'; });
-      h += '</ul>';
+      /* v3.6: every area section of the bulletin; the FIRs and points of this route first, the rest folded away */
+      var SECN = { dep: 'around departure', enr: 'en route', altn: 'to the alternates', dest: 'around destination' };
+      var rli = function (t) { return '<li><b>' + esc(t.fir) + ' ' + esc(t.id) + '</b>' + (t.kind === 'conflict' || t.kind === 'gnss' ? ' <b class="bad">' + t.kind + '</b>' : (t.kind === 'airspace' ? ' <small>(routine airspace reservation)</small>' : '')) + ' – ' + esc(t.x.slice(0, 300)) + (t.x.length > 300 ? ' …' : '') + '</li>'; };
+      var onL = O.rnotams.filter(function (t) { return t.on; }), offL = O.rnotams.filter(function (t) { return !t.on; });
+      h += '<div class="bar"><span>Area NOTAMs on your route</span><small>' + onL.length + ' of ' + O.rnotams.length + ' in the OFP area sections – by FIR or waypoint block</small></div>';
+      if (onL.length) {
+        var seenB = {}, ordB = [];
+        onL.forEach(function (t) { if (!seenB[t.fir]) { seenB[t.fir] = []; ordB.push(t.fir); } seenB[t.fir].push(t); });
+        ordB.forEach(function (b) {
+          var l = seenB[b], flag = l.filter(function (t) { return t.kind === 'conflict' || t.kind === 'gnss'; }).length;
+          h += '<details class="omc"' + (flag ? ' open' : '') + '><summary><b>' + esc(b) + '</b> ' + esc(cap(l[0].name || '')) + ' – ' + l.length + ' NOTAM' + (l.length === 1 ? '' : 's') + ' <small>(' + esc(SECN[l[0].sec] || '') + ')</small>' +
+            (flag ? ' <b class="bad">' + flag + ' GNSS / security</b>' : '') + '</summary><ul class="gpl">' + l.map(rli).join('') + '</ul></details>';
+        });
+      } else h += '<p class="note">None of the area NOTAM blocks is a FIR or a waypoint of this route.</p>';
+      if (offL.length) {
+        var cnt = {}; offL.forEach(function (t) { cnt[t.fir] = (cnt[t.fir] || 0) + 1; });
+        h += '<details class="omc"><summary><b>Area NOTAMs for FIRs / points not on your route</b> <small>' + Object.keys(cnt).map(function (k) { return esc(k) + ' ' + cnt[k]; }).join(', ') + '</small></summary><ul class="gpl">' + offL.map(rli).join('') + '</ul></details>';
+      }
     }
-    if (O.sigmet || O.airmet) h += '<div class="bar"><span>SIGMET / AIRMET in the OFP</span></div><pre class="pre">' + esc(((O.sigmet || '') + '\n' + (O.airmet || '')).trim()) + '</pre>';
+    var SG2 = sigRoute(O, D);
+    if (SG2.on.length) {
+      h += '<div class="bar"><span>SIGMET on your route</span><small>by FIR and time (planned take-off + flight-plan EET) - the area is not compared with your track</small></div>' +
+        '<div class="tw"><table><thead><tr><th>FIR</th><th>You are there</th><th>SIGMET</th><th>Valid</th><th>At your time</th></tr></thead><tbody>';
+      SG2.on.forEach(function (b) {
+        var win = O.to == null ? '-' : b.wins.map(function (w) { return zt(O.to + w[0]) + '-' + zt(O.to + w[1]); }).join(', ');
+        b.items.forEach(function (i, k) {
+          h += '<tr><td>' + (k ? '' : '<b>' + esc(b.fir) + '</b> ' + esc(cap(b.name))) + '</td><td>' + (k ? '' : win) + '</td><td>' + esc(i.id) + ' <b>' + esc([i.ph, i.top].filter(Boolean).join(' ')) + '</b> ' + esc(i.mov) +
+            '</td><td>' + zhm(i.from) + '-' + zhm(i.to) + '</td><td class="' + (i.active ? 'bad' : i.near ? 'warn' : 'ok') + '">' + (i.active == null ? '?' : i.active ? 'VALID' : i.near ? 'starts / ends ' + i.near.g + ' min ' + (i.near.after ? 'after you leave' : 'before you enter') : 'not at your time') + '</td></tr>';
+        });
+      });
+      h += '</tbody></table></div>';
+      SG2.on.forEach(function (b) { h += '<details class="omc"><summary><b>' + esc(b.fir) + ' ' + esc(cap(b.name)) + '</b> - full text</summary><pre class="pre">' + esc(b.text) + '</pre></details>'; });
+    }
+    if (SG2.off.length) h += '<details class="omc"><summary><b>SIGMETs for FIRs not on your route</b> <small>' + SG2.off.map(function (b) { return esc(b.fir); }).join(', ') + '</small></summary><pre class="pre">' +
+      esc(SG2.off.map(function (b) { return b.fir + ' ' + b.name + ' FIR\n' + b.text; }).join('\n\n')) + '</pre></details>';
+    if ((O.sigmet || O.airmet) && !SG2.n) h += '<div class="bar"><span>SIGMET / AIRMET in the OFP</span></div><pre class="pre">' + esc(((O.sigmet || '') + '\n' + (O.airmet || '')).trim()) + '</pre>';
+    else if (O.airmet) h += '<div class="bar"><span>AIRMET in the OFP</span></div><pre class="pre">' + esc(O.airmet.trim()) + '</pre>';
     if (O.impacts.length) {
       h += '<div class="bar"><span>Operational impacts</span><small>OFP</small></div><div class="tw"><table><thead><tr><th>Change</th><th></th><th>Burn</th><th>Time</th></tr></thead><tbody>';
       O.impacts.forEach(function (x) { h += '<tr><td>' + esc(x.grp || '') + '</td><td>' + esc(x.dir + ' ' + x.amt) + '</td><td>' + (x.burn == null ? '-' : (x.bs === 'M' ? '−' : '+') + x.burn + ' kg') + '</td><td>' + (x.time == null ? '-' : (x.ts === 'M' ? '−' : '+') + hm(x.time)) + '</td></tr>'; });
@@ -474,7 +635,7 @@
     /* ---------- WAYPOINTS page header block */
     V.wpt_static = '<details class="omc"><summary><b>Auto-built waypoints</b> – times, MORA and minimum fuel are the OFP navlog; ' +
       (D.auto.interp ? D.auto.interp + ' positions on the map are estimated between the OFP wind points; ' : '') +
-      'there are no comms, special-area or diversion notes in an auto-built flight (no CCI / AOI / CRAR / RSI loaded).</summary>' +
+      'there are no comms or special-area notes in an auto-built flight (no CCI / AOI / CRAR / RSI loaded). The diversion column is the two nearest airports of the OFP list with the distance in NM - not a suitability check.</summary>' +
       '<div class="tw"><table><thead><tr><th>FIR</th><th>From the flight plan</th></tr></thead><tbody>' +
       D.firs.map(function (f) { return '<tr><td><b>' + esc(f.fir) + '</b> ' + esc(f.name) + '</td><td>entry ' + hm(f.eet_min) + '</td></tr>'; }).join('') +
       '</tbody></table></div><p class="allf">Load a prep file (Claude) or the regulations library to get the comms order, CPDLC logon times, special areas and diversion notes on these rows.</p></details>';

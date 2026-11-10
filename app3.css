@@ -440,3 +440,11 @@ pre.pre { white-space: pre-wrap; word-break: break-word; font: inherit; font-siz
 b.bad { color: var(--red); }
 table.rwt td:not(:last-child), table.rwt th { white-space: nowrap; }
 table.rwt td:last-child { min-width: 12em; }
+
+/* ---------- v3.6: coverage block on DASH, route-pack notes */
+.cov { margin-top: 12px; } .cov > summary { line-height: 1.5; }
+.cov.covbad { border-left: 5px solid var(--red); }
+b.cvok { color: var(--grn); } b.cvno { color: var(--red); } b.cvw { color: var(--amb, #c98a00); }
+table.cvt td, table.cvt th { font-size: .93em; vertical-align: top; } table.cvt td:first-child { white-space: nowrap; }
+.covtxt { width: 100%; box-sizing: border-box; font: .88em/1.45 var(--mono); padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: inherit; resize: vertical; margin-top: 6px; }
+.cmi.nocov { color: var(--red); font-weight: 600; }
