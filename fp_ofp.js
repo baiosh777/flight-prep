@@ -484,6 +484,7 @@
     return out;
   }
 
+  F.parseTaf = parseTaf;   // v3.7: the live weather uses the same TAF decoder as the OFP weather
   if (typeof window !== 'undefined') window.FPOfp = F;
   if (typeof module !== 'undefined' && module.exports) module.exports = F;
 })();

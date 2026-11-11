@@ -101,6 +101,11 @@
   L.apply = function (rec, libs) {
     if (!rec || !rec.data) return rec;
     var D = rec.data, auto = !!(D.auto), used = { apt: [], fir: [], mel: false, regs: false, route: null };
+    /* v3.7 (fault of 10 NOV 26: a flight file built outside the app with the libraries already written into it got the stored libraries a second
+       time - CCI / AOI summary, AGC, route notes and TEM blocks twice). The app applies the libraries to a fresh record at every open and never
+       stores the result, so "D._lib is already in the record" means: this file carries library content. Everything that APPENDS is then skipped. */
+    var pre = !!D._lib;
+    function has(view, mark) { return !!(rec.views && rec.views[view] && rec.views[view].indexOf(mark) >= 0); }
     var fl = D.flight || {};
     /* ---- v3.6 route pack of this city pair (auto-built flights only - a prepared flight keeps its own text) */
     var rkey = (fl.dep || '') + '-' + (fl.arr || '');
@@ -129,8 +134,10 @@
         }
         var before = (e.cpdlc && e.cpdlc.before != null) ? e.cpdlc.before : e.before;
         if (before != null && f.eet_min != null && f.eet_min > 0) {
-          var id = f.fir + '-logon';
-          if (!have[id]) {
+          var id = f.fir + '-logon', due = Math.max(0, f.eet_min - before), ad = (e.cpdlc && e.cpdlc.addr) || '';
+          /* v3.7: a prepared flight that already has this log-on / call (same FIR, or the same time with this address) keeps its own line only */
+          var dup = dl.some(function (d) { return (d.fir === f.fir && (Math.abs(d.eet - due) <= 2 || /log-?\s?on/i.test(d.text || ''))) || (ad && Math.abs(d.eet - due) <= 2 && (d.text || '').indexOf(ad) >= 0); });
+          if (!have[id] && !dup) {
             var ro1 = rpFir(RP, f.fir, 1);
             /* v3.6: '+ estimate' only where a hand-written entry says so - the entries built by rule from the RSI tables give the log-on time only */
             dl.push({ id: id, fir: f.fir, name: f.name || e.name || '', eet: Math.max(0, f.eet_min - before),
@@ -160,7 +167,7 @@
       if (auto && lastR && lastR.i !== 0 && !lastR.aptc) { var ac = aptComms(aptOf(libs, fl.arr), 'arr'); if (ac) { lastR.call = (lastR.call || '') + ac; lastR.aptc = 1; } }
     }
     /* ---- v3.6 route pack: notes on the FIR boundary rows, on single waypoints and on the first waypoint of an airway */
-    if (RP) {
+    if (RP && !(pre && (D.rows || []).some(function (r) { return r.rp; }))) {
       var seenAw = {}, cnt = {};
       (D.rows || []).forEach(function (r) {
         if (r.bnd || r.i === 0) {
@@ -174,7 +181,7 @@
         if (a && !seenAw[r.aw]) { seenAw[r.aw] = 1; addCell(r, 'special', a.special); addCell(r, 'threat', a.threat); }
       });
       used.route = rkey;
-      if (rec.views && rec.views.tem) {
+      if (rec.views && rec.views.tem && !has('tem', '<span>Route pack ' + esc(rkey) + '</span>')) {
         var th = rpTem(RP, D, rkey);
         rec.views.tem = rec.views.tem.indexOf('<!--rp-->') >= 0 ? rec.views.tem.replace('<!--rp-->', th) : rec.views.tem + th;
       }
@@ -198,8 +205,15 @@
           var ic = side === 'dep' ? fl.dep : fl.arr, p = AP[ic];
           if (!p || !p[side] || !rec.views || !rec.views[side]) return;
           /* v3.5 packs: the brief for this side, then the shared summary, the charts (once) and the Lido items in full */
-          var body = p[side].html || ((p[side].top || '') + (p.summary || '') + (p.common || '') + (p.items || ''));
+          /* v3.7 (pilot 10 NOV: "only the AGC ... not all the charts. Too much information. Just a summary of the AOI and CCI. And notams."):
+             the brief, then ONE ground chart, then the written summary; all other charts and the Lido items in full open with a button */
+          var com = p.common || '', cut = com.indexOf('<h2 class="pt2">', com.indexOf('<h2 class="pt2">') + 10), nCh = (com.match(/<h2 class="pt2">/g) || []).length;
+          var first = cut > 0 ? com.slice(0, cut).replace(/<small>\d+ Lido charts/, '<small>ground chart') : com, rest = cut > 0 ? com.slice(cut) : '';
+          var body = p[side].html || ((p[side].top || '') + first + (p.summary || '') +
+            (rest ? '<details class="omc morech"><summary><b>More charts (' + (nCh - 1) + ')</b> – the other ground, parking and facility charts of the pack</summary>' + rest + '</details>' : '') +
+            (p.items ? '<details class="omc morech"><summary><b>Lido items in full</b> – CCI, AOI and AFC text, newest valid version of each</summary>' + p.items + '</details>' : ''));
           if (!body) return;
+          if (has(side, '<span>Airport pack ' + esc(ic) + '</span>')) return;   // v3.7: already on the page (file with library content, or a second pass)
           rec.views[side] = rebar(rec.views[side], 'The weather, NOTAMs, runway and fuel above are from this OFP; the brief, the CCI / AOI text and the charts below come from the stored <b>' + esc(ic) + ' airport pack</b> (' + esc(p[side].src || 'prepared flight') + ').') +
             '<div class="bar"><span>Airport pack ' + esc(ic) + '</span><small>' + esc(p[side].src || '') + ' – not from this OFP</small></div>' + body;
         });
@@ -210,6 +224,13 @@
       if (!D.mel || !Object.keys(D.mel).length) { D.mel = libs.mel.items; used.mel = true; }
     }
     used.regs = !!(libs && libs.regs);
+    /* v3.7: document links (DocuNet codes + section ids) kept in the regulations library - joined to what the flight file has, the flight file wins */
+    if (libs && libs.regs && libs.regs.doclinks) {
+      var LD = libs.regs.doclinks, FD = D.doclinks || {}, M = {}, k_;
+      for (k_ in LD) M[k_] = LD[k_];
+      for (k_ in FD) { if (k_ === 'docs' || k_ === 'ids' || k_ === 'apt') { var o_ = {}, j_; for (j_ in (LD[k_] || {})) o_[j_] = LD[k_][j_]; for (j_ in FD[k_]) o_[j_] = (k_ === 'docs' && o_[j_]) ? Object.assign({}, o_[j_], FD[k_][j_]) : FD[k_][j_]; M[k_] = o_; } else M[k_] = FD[k_]; }
+      D.doclinks = M; used.links = true;
+    }
     /* ---- the route's countries out of the regulations library (REGS) onto the TEM page */
     if (auto && libs && libs.regs && (libs.regs.countries || []).length) {
       var want = {}, names = [];
@@ -229,7 +250,7 @@
           lines.slice(0, 10).map(function (x) { return '<li>' + esc(typeof x === 'string' ? x : (x.x || '')) + '</li>'; }).join('') +
           '</ul><p class="allf">Full text on the REGS page.</p></details>');
       });
-      if (cards.length && rec.views && rec.views.tem) {
+      if (cards.length && rec.views && rec.views.tem && !has('tem', '<span>Countries on this route</span>')) {
         rec.views.tem += '<div class="bar"><span>Countries on this route</span><small>Lido CRAR / RSI from the regulations library – the Lido text is the authority</small></div>' + cards.join('');
         used.regs_cards = cards.length;
       }
@@ -259,7 +280,7 @@
       try {
         var cv = cover(rec, libs || {}, RP, rkey);
         D.coverage = cv.data;
-        if (rec.views && rec.views.dash) rec.views.dash = rec.views.dash.indexOf('<!--cov-->') >= 0 ? rec.views.dash.replace('<!--cov-->', cv.html) : rec.views.dash + cv.html;
+        if (rec.views && rec.views.dash && !has('dash', 'class="omc cov')) rec.views.dash = rec.views.dash.indexOf('<!--cov-->') >= 0 ? rec.views.dash.replace('<!--cov-->', cv.html) : rec.views.dash + cv.html;
       } catch (e) { if (typeof console !== 'undefined') console.log('coverage', e); }
     }
     return rec;

@@ -1,5 +1,5 @@
 /* fp_refs.js v3.0 (09 NOV 26) - document references in the pack text become tappable (user: "references in the CCI / AOI or any CRAR
-   to be links sending me to the corresponding document - the charts app or DocuNet"). A tap opens a card with: the document and chapter,
+   to be links sending me to the corresponding document - the charts app or DocuNet"). v3.7: a tap opens DocuNet at the reference (app / web); hold = a card with: the document and chapter,
    the matching text captured in this flight file (AOI pages, FIR procedures), and buttons that open the document in DocuNet / the charts
    app. The links themselves come from the flight file (data.doclinks) - this shell holds no company addresses. Without doclinks the card
    still shows where the reference lives (document, chapter, page when known) so you can open it yourself. */
@@ -49,10 +49,30 @@
     var t = el.closest('details, .dvc, .wxc, article, tr'); if (t) { var m = /\b([A-Z]{4})\b/.exec(t.textContent); if (m && /^[OVU][A-Z]{3}$|^[A-Z]{4}$/.test(m[1])) return m[1]; }
     return F ? F.arr : '';
   }
+  /* v3.7 (pilot 10 + 11 NOV): a TAP opens DocuNet at the reference straight away - the DocuNet app on the iPad by default; HOLD the reference
+     (or tap when there is no link for it) for the card with the captured text. The choice app / web / card is kept on the iPad. */
+  function refOf(b) { return { ref: b.getAttribute('data-ref'), k: b.getAttribute('data-k'), doc: DOCS[b.getAttribute('data-k')], icao: icaoOf(b) }; }
+  function mode() { try { return localStorage.getItem('fpapp:refopen') || 'app'; } catch (e) { return 'app'; } }
+  var held = null, heldAt = 0, timer = 0;
+  function card(b) { if (window.FPOpenRef) window.FPOpenRef(refOf(b)); }
+  document.addEventListener('pointerdown', function (ev) { var b = ev.target.closest && ev.target.closest('.refl'); clearTimeout(timer); held = null; if (!b) return; timer = setTimeout(function () { held = b; heldAt = Date.now(); card(b); }, 550); }, true);
+  ['pointerup', 'pointercancel', 'pointerleave', 'scroll'].forEach(function (n) { document.addEventListener(n, function () { clearTimeout(timer); }, true); });
+  document.addEventListener('contextmenu', function (ev) { if (ev.target.closest && ev.target.closest('.refl')) ev.preventDefault(); }, true);
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest('.refl'); if (!b) return;
     ev.preventDefault(); ev.stopPropagation();
-    if (window.FPOpenRef) window.FPOpenRef({ ref: b.getAttribute('data-ref'), k: b.getAttribute('data-k'), doc: DOCS[b.getAttribute('data-k')], icao: icaoOf(b) });
+    if (held === b && Date.now() - heldAt < 1500) { held = null; return; }   // the hold already opened the card
+    var r = refOf(b), lk = window.FPRefLink ? window.FPRefLink(r) : null, m = mode();
+    if (!lk || m === 'card' || (m === 'app' && !lk.app && !lk.web)) { card(b); return; }
+    var useApp = m === 'app' && lk.app, url = useApp ? lk.app : (lk.web || lk.app);
+    try { if (useApp || url.indexOf('http') !== 0) window.location.href = url; else window.open(url, '_blank', 'noopener'); } catch (e) { card(b); return; }
+    var T = window.FPCore && window.FPCore.toast;
+    if (T) T('DocuNet ' + (useApp ? 'app' : 'web') + ': ' + r.ref + (lk.id && !lk.exact && lk.at ? ' – opened at ' + lk.at : '') + '. Hold the reference for the offline card.');
+  }, true);
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-act="x-refmode"]'); if (!b) return;
+    try { localStorage.setItem('fpapp:refopen', b.dataset.v); } catch (e) { }
+    b.parentNode.querySelectorAll('button').forEach(function (x) { x.classList.toggle('on', x === b); });
   }, true);
   window.FPRefs = { scan: scan, DOCS: DOCS, keyOf: keyOf, RX: RX };
 })();

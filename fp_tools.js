@@ -431,6 +431,27 @@ window.FPTools = function (A) {
 
   /* ---------- v3: reference card (fp_refs.js) - where a reference lives, the matching text captured in this flight file, open the document */
   var DL = D.doclinks || {};
+  /* v3.7 (pilot 10 + 11 NOV: "references to go to DocuNet ... same page straight away", "open the app on the iPad not webpage"):
+     a reference opens DocuNet AT that section - in the DocuNet app (scheme://CODE#ID, the form DocuNet's own "document URL" gives) or on the web
+     (...?manualCode=CODE&preferredRevisionId=REV&id=ID). The document codes and the section ids are DATA (flight file / regulations library:
+     doclinks.scheme, .web, .docs[key].code / .revid / .ids, .ids[map][section], .apt) - this shell holds no company address.
+     A section that is not in the id list opens at its nearest parent chapter (exact = false). */
+  function refLink(r) {
+    var dk = (r.doc || [])[1] || '', docs = DL.docs || {}, cfg = docs[dk] || docs[String(r.k || '').toLowerCase()] || null, ids = DL.ids || {};
+    var code = cfg && cfg.code, rev = cfg && cfg.revid, id = '', exact = false, at = '';
+    var num = (/(\d+(?:\.\d+)+)/.exec(r.ref || '') || [])[1] || '';
+    if (dk === 'apt') {
+      var ap = DL.apt || {}, ic = r.icao || '', reg = ic && ((ap.byIcao && ap.byIcao[ic]) || (ap.prefix && (ap.prefix[ic.slice(0, 2)] || ap.prefix[ic.charAt(0)]))), man = reg && ap.manuals && ap.manuals[reg];
+      if (!man) return null; code = man.code; rev = man.revid; id = ap.idIsIcao ? ic : ''; at = (man.title || 'airport charts') + (ic ? ' – ' + ic : '');
+    } else if (code && num && cfg.ids && ids[cfg.ids]) {
+      var map = ids[cfg.ids], q = num; while (q) { if (map[q]) { id = map[q]; exact = q === num; at = q; break; } q = q.indexOf('.') > 0 ? q.replace(/\.\d+$/, '') : ''; }
+    }
+    if (!code) return null;
+    var web = DL.web ? DL.web + (DL.web.indexOf('?') < 0 ? '?' : '&') + 'manualCode=' + encodeURIComponent(code) + '&preferredRevisionId=' + encodeURIComponent(rev || 'Latest') + (id ? '&id=' + encodeURIComponent(id) : '') : '';
+    var app = DL.scheme ? DL.scheme + '://' + code + (id ? '#' + encodeURIComponent(id) : '') : '';
+    return (app || web) ? { app: app, web: web, exact: exact, at: at, id: id, title: (cfg && (cfg.name || cfg.title)) || at } : null;
+  }
+  window.FPRefLink = refLink;
   function refPage(doc, ref) {   // page hint from the flight file: doclinks.docs[key].pages = {'3.139': 5066, ...} (longest matching chapter prefix)
     var pg = doc && doc.pages ? doc.pages : null; if (!pg) return null; var num = (/\d+(?:\.\d+)*/.exec(ref) || [''])[0], best = null, bl = -1;
     Object.keys(pg).forEach(function (k) { if ((num + '.').indexOf(k + '.') === 0 && k.length > bl) { bl = k.length; best = k; } });
@@ -455,16 +476,22 @@ window.FPTools = function (A) {
     var h = '<div class="refh"><b>' + esc(r.ref) + '</b><span>' + esc(cfg && cfg.title || doc[0]) + (/^(AOI|CCI|AFC|AGC|APC|IAC|SID|STAR)$/.test(key) && r.icao ? ' · ' + esc(r.icao) : '') + '</span></div>';
     if (pg) h += '<p class="refw">Chapter ' + esc(pg.ch) + (cfg.name ? ' of ' + esc(cfg.name) : '') + ' starts on <b>page ' + esc(pg.page) + '</b>' + (cfg.rev ? ' <small>(' + esc(cfg.rev) + ')</small>' : '') + '.</p>';
     else if (cfg && cfg.hint) h += '<p class="refw">' + esc(cfg.hint) + '</p>';
-    var btns = '';
+    var btns = '', lk = refLink(r), mode = (function () { try { return localStorage.getItem('fpapp:refopen') || 'app'; } catch (e) { return 'app'; } })();
     function openBtn(u, lab, cls) { return u ? '<a class="refb ' + (cls || '') + '" href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(lab) + '</a>' : ''; }
+    if (lk) {
+      h += '<p class="refw">' + (lk.id ? (lk.exact ? 'Opens at <b>' + esc(lk.at) + '</b>.' : 'Opens at <b>' + esc(lk.at) + '</b> – the nearest chapter in the link list.') : 'Opens the document (no section link for this reference).') + '</p>';
+      if (lk.app) btns += '<a class="refb pri" href="' + esc(lk.app) + '">Open in the DocuNet app</a>';
+      if (lk.web) btns += openBtn(lk.web, 'Open on the DocuNet web page', lk.app ? '' : 'pri');
+    }
     var url = cfg && cfg.url ? cfg.url : null; if (url && pg && cfg.pageUrl) url = cfg.pageUrl.replace('{page}', pg.page);
-    if (url) btns += openBtn(url, 'Open ' + (cfg.app || 'the document'), 'pri');
+    if (url && !lk) btns += openBtn(url, 'Open ' + (cfg.app || 'the document'), 'pri');
     if (/^(AOI|CCI|AFC|AGC|APC|IAC|SID|STAR)$/.test(key) && DL.charts && DL.charts.url) btns += openBtn(DL.charts.url.replace('{icao}', r.icao || ''), 'Open ' + (DL.charts.title || 'the charts app'), url ? '' : 'pri');
-    if (DL.portal && DL.portal.url && (!url || url !== DL.portal.url)) btns += openBtn(DL.portal.url, 'Open ' + (DL.portal.title || 'DocuNet'), btns ? '' : 'pri');
+    if (!lk && DL.portal && DL.portal.url && (!url || url !== DL.portal.url)) btns += openBtn(DL.portal.url, 'Open ' + (DL.portal.title || 'DocuNet'), btns ? '' : 'pri');
     if ((key === 'MEL' || key === 'CDL') && D.mel) { var mno = (/\d{2}-\d{2}-\d{2}(?:-\d{2})?[A-Z]?/.exec(r.ref) || [''])[0]; if (mno) btns = '<button type="button" class="refb pri" data-act="melv" data-no="' + esc(mno) + '">Open MEL ' + esc(mno) + ' in the app</button>' + btns.replace(' pri', ''); }
     if (key === 'NOTAM' && $('v-wxnotam')) btns = '<a class="refb pri" href="#wxnotam">Open the WX · NOTAM page</a>' + btns.replace(' pri', '');
     btns += '<button type="button" class="refb" data-act="x-refcopy" data-t="' + esc(r.ref + (pg ? ' – page ' + pg.page : '')) + '">Copy reference</button>';
     h += '<div class="refbs">' + btns + '</div>';
+    if (lk) h += '<div class="refmode"><small>A tap on a reference opens:</small><div class="seg">' + [['app', 'DocuNet app'], ['web', 'DocuNet web'], ['card', 'this card']].filter(function (o) { return o[0] === 'card' || lk[o[0]]; }).map(function (o) { return '<button type="button" data-act="x-refmode" data-v="' + o[0] + '" class="' + (mode === o[0] ? 'on' : '') + '">' + o[1] + '</button>'; }).join('') + '</div><small>Hold a reference for this card.</small></div>';
     if (!DL.docs && !DL.portal) h += '<p class="note">No document links in this flight file yet – open ' + esc(doc[0]) + ' yourself' + (pg ? ' at page ' + pg.page : '') + '.</p>';
     if (off.length) h += '<h3 class="shh">In this flight file</h3>' + off.map(function (o) { return '<div class="refo"><b>' + esc(o.t) + '</b><p>' + esc(o.x) + '</p><small>' + esc(o.src) + '</small></div>'; }).join('');
     else h += '<p class="note">No captured text for this reference in the flight file.</p>';

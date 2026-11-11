@@ -691,9 +691,17 @@ window.FPGlobe = function (host, D, L) {
     if (eC > 0) { x.beginPath(); path(subLine(0, eC)); x.strokeStyle = c.grn; x.lineWidth = 3.2; x.stroke(); }
     if (e >= 0 && e < T) { var sg = seg(eC); x.beginPath(); path({ type: 'LineString', coordinates: [posAt(eC), RC[sg.k + 1]] }); x.strokeStyle = c.mag; x.lineWidth = 3.6; x.stroke(); }
     SWP.forEach(function (w) { if (w.e > eC) return; tri(w.p, w.s); x.fillStyle = c.grn; x.fill(); x.lineWidth = 1.2; x.strokeStyle = c.halo; x.stroke(); });
-    if (lay.apt) { var na = nearApts(posAt(eC), distAt(eC)), pp0 = posAt(eC);
-      [[na.back, c.grn], [na.ahead, c.cyan]].forEach(function (z) {
-        if (!z[0]) return; x.beginPath(); path({ type: 'LineString', coordinates: [pp0, [z[0].a.lon, z[0].a.lat]] }); x.setLineDash([4, 5]); x.strokeStyle = z[1]; x.lineWidth = 1.8; x.globalAlpha = z[0].d <= 420 ? 0.9 : 0.4; x.stroke(); x.setLineDash([]); x.globalAlpha = 1; });
+    /* v3.7 (pilot 11 NOV: "not very clear which one is which ... put a line ... to see which airport is where"): the RETURN (green) and AHEAD (blue)
+       airports of the two boxes under the map - a solid line from the aircraft in the colour of the box, a ring on the airport and its code + distance.
+       Always drawn (it was a thin dashed line, only with the Airports layer on). */
+    { var na = nearApts(posAt(eC), distAt(eC)), pp0 = posAt(eC);
+      [[na.back, c.grn, '◀ ', ''], [na.ahead, c.cyan, '', ' ▶']].forEach(function (z) {
+        if (!z[0] || z[0].d < 1) return; var al = [z[0].a.lon, z[0].a.lat], far = z[0].d > 420;
+        x.beginPath(); path({ type: 'LineString', coordinates: [pp0, al] }); x.strokeStyle = c.halo; x.lineWidth = 5.5; x.globalAlpha = 0.8; x.stroke();
+        x.beginPath(); path({ type: 'LineString', coordinates: [pp0, al] }); if (far) x.setLineDash([10, 6]); x.strokeStyle = z[1]; x.lineWidth = 3; x.globalAlpha = 1; x.stroke(); x.setLineDash([]);
+        if (vis(al)) { var ap = proj(al); x.beginPath(); x.arc(ap[0], ap[1], 10, 0, 6.2832); x.strokeStyle = c.halo; x.lineWidth = 5; x.stroke(); x.beginPath(); x.arc(ap[0], ap[1], 10, 0, 6.2832); x.strokeStyle = z[1]; x.lineWidth = 3; x.stroke();
+          if (onScreen(ap)) label(z[2] + z[0].a.icao + ' ' + Math.round(z[0].d) + ' NM' + z[3], ap, { pri: 10, box: z[1], col: c.bg, font: '800 11px ' + c.font, size: 12, off: 18 }); }
+      });
     }
     // aircraft (planned position)
     var pp = posAt(eC);
@@ -719,14 +727,21 @@ window.FPGlobe = function (host, D, L) {
   }
 
   /* ---------- side view: MORA along the route, planned levels, aircraft; return / ahead airports either side */
-  var PV = host.querySelector('.gpsvg'), PX0 = 52, PX1 = 990, PY0 = 158, PY1 = 24, PMAX = 42000;
+  var PV = host.querySelector('.gpsvg'), PX0 = 52, PX1 = 990, PY0 = 158, PY1 = 24, PMAX = 42000, PW = 1000, PH = 190, PFIT = false;
+  /* v3.7 (pilot 10 + 11 NOV: "the vertical profile ... doesn't fill its area" in landscape): the drawing had a fixed 1000 x 190 shape and was
+     letter-boxed in a wide, low box. Now 1 unit = 1 screen pixel of the box as it is, redrawn whenever the box changes (rotate, split, full screen). */
+  function fitProfile() {
+    if (!PV) return false; var w = Math.round(PV.clientWidth), h_ = Math.round(PV.clientHeight); if (w < 200 || h_ < 60) return false;
+    if (PFIT && Math.abs(w - PW) < 3 && Math.abs(h_ - PH) < 3) return false;
+    PFIT = true; PW = w; PH = h_; PX0 = 40; PX1 = PW - 8; PY1 = 20; PY0 = PH - 29; PV.setAttribute('viewBox', '0 0 ' + PW + ' ' + PH); return true;
+  }
   function px(e) { return PX0 + (PX1 - PX0) * Math.max(0, Math.min(T, e)) / T; }
   function py(ft) { return PY0 - (PY0 - PY1) * Math.max(0, Math.min(PMAX, ft)) / PMAX; }
   function lvlAt(e) { var P = PR.pts; for (var i = 0; i < P.length - 1; i++) if (e <= P[i + 1][0]) { var f = P[i + 1][0] > P[i][0] ? (e - P[i][0]) / (P[i + 1][0] - P[i][0]) : 1; return P[i][1] + (P[i + 1][1] - P[i][1]) * Math.max(0, Math.min(1, f)); } return 0; }
-  if (PV && PR) (function () {
-    var h = '';
-    (D.firseq || D.firs).forEach(function (f, i) { var b = i + 1 < (D.firseq || D.firs).length ? (D.firseq || D.firs)[i + 1].eet_min : T; h += '<rect x="' + px(f.eet_min) + '" y="2" width="' + (px(b) - px(f.eet_min)) + '" height="14" class="' + f.cls + '"/><text x="' + (px(f.eet_min) + 3) + '" y="13" class="ptx b">' + esc(f.fir) + '</text>'; });
-    [10000, 20000, 30000, 40000].forEach(function (ft) { h += '<line x1="' + PX0 + '" x2="' + PX1 + '" y1="' + py(ft) + '" y2="' + py(ft) + '" class="pg"/><text x="' + (PX0 - 4) + '" y="' + (py(ft) + 4) + '" class="ptx r">FL' + ft / 100 + '</text>'; });
+  function drawProfile() {
+    var h = '', lowBox = (PY0 - PY1) < 70, gap = PFIT ? 46 : 34;
+    (D.firseq || D.firs).forEach(function (f, i) { var b = i + 1 < (D.firseq || D.firs).length ? (D.firseq || D.firs)[i + 1].eet_min : T, fw = px(b) - px(f.eet_min); h += '<rect x="' + px(f.eet_min) + '" y="2" width="' + fw + '" height="14" class="' + f.cls + '"/>' + (fw > (PFIT ? 34 : 24) ? '<text x="' + (px(f.eet_min) + 3) + '" y="13" class="ptx b">' + esc(f.fir) + '</text>' : ''); });
+    (lowBox ? [20000, 40000] : [10000, 20000, 30000, 40000]).forEach(function (ft) { h += '<line x1="' + PX0 + '" x2="' + PX1 + '" y1="' + py(ft) + '" y2="' + py(ft) + '" class="pg"/><text x="' + (PX0 - 4) + '" y="' + (py(ft) + 4) + '" class="ptx r">FL' + ft / 100 + '</text>'; });
     for (var m = 0; m <= T; m += 60) h += '<line x1="' + px(m) + '" x2="' + px(m) + '" y1="' + PY1 + '" y2="' + PY0 + '" class="pg"/>';
     var hi = null;
     PR.mora.forEach(function (q) { var c_ = q[2] > 10000 ? 'mo2' : (q[2] > 5000 ? 'mo1' : 'mo0'); h += '<rect x="' + px(q[0]) + '" y="' + py(q[2]) + '" width="' + Math.max(0.6, px(q[1]) - px(q[0])) + '" height="' + (PY0 - py(q[2])) + '" class="' + c_ + '"/>'; if (!hi || q[2] > hi[2]) hi = q; });
@@ -735,11 +750,17 @@ window.FPGlobe = function (host, D, L) {
     h += '<polyline class="plv" points="' + PR.pts.map(function (q) { return px(q[0]) + ',' + py(q[1]); }).join(' ') + '"/>';
     var lastX = -99;
     RT.forEach(function (w, i) { if (!w.m && i !== 0 && i !== RT.length - 1) return; var xx = px(w.e); h += '<line x1="' + xx + '" x2="' + xx + '" y1="' + PY0 + '" y2="' + (PY0 + 7) + '" class="ptk"/>';
-      if (xx - lastX > 34) { h += '<text x="' + xx + '" y="' + (PY0 + 18) + '" class="ptx c">' + esc(w.n) + '</text><text x="' + xx + '" y="' + (PY0 + 29) + '" class="ptx c m">' + (L.wz ? L.wz(w.e) : hm(w.e)) + '</text>'; lastX = xx; } });
+      if (xx - lastX > gap) { h += '<text x="' + xx + '" y="' + (PY0 + 18) + '" class="ptx c">' + esc(w.n) + '</text><text x="' + xx + '" y="' + (PY0 + 29) + '" class="ptx c m">' + (L.wz ? L.wz(w.e) : hm(w.e)) + '</text>'; lastX = xx; } });
     h += '<line class="pnow" x1="0" x2="0" y1="' + PY1 + '" y2="' + PY0 + '"/><g class="pgps" style="display:none"><circle r="7"/></g>' +
-      '<g class="pac"><circle r="13" class="pah"/><path d="M0,-15C1.7,-15 2.2,-12 2.2,-9.5L2.2,-3.5L14,3L14,6L2.2,2.6L2.2,9L5.5,12L5.5,14.2L0,12.8L-5.5,14.2L-5.5,12L-2.2,9L-2.2,2.6L-14,6L-14,3L-2.2,-3.5L-2.2,-9.5C-2.2,-12 -1.7,-15 0,-15Z" transform="rotate(90) scale(0.85)"/></g>';
-    PV.innerHTML = h;
-    function pick(ev) { var r = PV.getBoundingClientRect(); if (!r.width) return; var xv = (ev.clientX - r.left) / r.width * 1000, e = (xv - PX0) / (PX1 - PX0) * T; stopPlay(); pv = Math.max(0, Math.min(T, e)); setMode('preview'); if (follow) centerPlane(false); }
+      '<g class="pac"><circle r="13" class="pah"/><path d="M0,-15C1.7,-15 2.2,-12 2.2,-9.5L2.2,-3.5L14,3L14,6L2.2,2.6L2.2,9L5.5,12L5.5,14.2L0,12.8L-5.5,14.2L-5.5,12L-2.2,9L-2.2,2.6L-14,6L-14,3L-2.2,-3.5L-2.2,-9.5C-2.2,-12 -1.7,-15 0,-15Z" transform="rotate(90) scale(' + (PFIT ? 0.62 : 0.85) + ')"/></g>';
+    PV.innerHTML = h; if (PFIT) { var ph_ = PV.querySelector('.pah'); if (ph_) ph_.setAttribute('r', 10); }
+  }
+  if (PV && PR) (function () {
+    fitProfile(); drawProfile();
+    function refit() { if (fitProfile()) { drawProfile(); updProfile(); } }
+    if (typeof ResizeObserver !== 'undefined') { try { new ResizeObserver(function () { refit(); }).observe(PV); } catch (x0) { } }
+    window.addEventListener('resize', function () { setTimeout(refit, 60); }); window.addEventListener('orientationchange', function () { setTimeout(refit, 250); });
+    function pick(ev) { var r = PV.getBoundingClientRect(); if (!r.width) return; var xv = (ev.clientX - r.left) / r.width * PW, e = (xv - PX0) / (PX1 - PX0) * T; stopPlay(); pv = Math.max(0, Math.min(T, e)); setMode('preview'); if (follow) centerPlane(false); }
     var dn = false;
     PV.addEventListener('pointerdown', function (ev) { dn = true; try { PV.setPointerCapture(ev.pointerId); } catch (x_) { } pick(ev); });
     PV.addEventListener('pointermove', function (ev) { if (dn) pick(ev); });
@@ -752,6 +773,7 @@ window.FPGlobe = function (host, D, L) {
       '<em>' + (near ? 'within 420 NM' : 'beyond 1 h (420 NM)') + '</em>';
   }
   var GB = host.querySelector('.gback'), GA = host.querySelector('.gahead');
+  [GB, GA].forEach(function (bx) { if (bx) { bx.setAttribute('role', 'button'); bx.tabIndex = 0; bx.addEventListener('click', function () { if (bx._ll) { setFollow(false); fly(bx._ll, Math.max(k, 3.2), 550); } }); } });   // v3.7: tap a box = the map goes to that airport
   function updProfile() {
     if (!PV || !PR) return;
     var e = curE(), eC = Math.max(0, Math.min(T, e)), xx = px(eC), yy = py(e < 0 ? 0 : lvlAt(eC));
@@ -761,8 +783,8 @@ window.FPGlobe = function (host, D, L) {
     var gf = gpsFix(), gp = PV.querySelector('.pgps');
     if (gf) { var ga = gpsAlong(gf), ex = px(eetAtDist(ga.d)); gp.style.display = ''; gp.setAttribute('transform', 'translate(' + ex + ',' + yy + ')'); } else gp.style.display = 'none';
     var na = nearApts(posAt(eC), distAt(eC));
-    GB.innerHTML = aptBox(na.back, -1); GB.classList.toggle('far', !!na.back && na.back.d > 420);
-    GA.innerHTML = aptBox(na.ahead, 1); GA.classList.toggle('far', !!na.ahead && na.ahead.d > 420);
+    GB.innerHTML = aptBox(na.back, -1); GB.classList.toggle('far', !!na.back && na.back.d > 420); GB._ll = na.back ? [na.back.a.lon, na.back.a.lat] : null;
+    GA.innerHTML = aptBox(na.ahead, 1); GA.classList.toggle('far', !!na.ahead && na.ahead.d > 420); GA._ll = na.ahead ? [na.ahead.a.lon, na.ahead.a.lat] : null;
   }
 
   /* ---------- public */

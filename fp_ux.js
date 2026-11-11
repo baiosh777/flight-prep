@@ -16,7 +16,7 @@ window.FPUx = (function () {
   /* ---------- 1. leg cards ---------- */
   var legs = null, open = {};
   function buildLegs() {
-    var host = $('legs'); if (!host || legs) return;
+    var host = $('legs'); if (!host || legs) return; host.classList.add('cmp');   /* v3.7: compact type so more waypoints fit */
     var D = C.D; legs = [];
     D.rows.forEach(function (r, i) {
       var card = document.createElement('article'); card.className = 'leg'; card.dataset.i = i;
@@ -31,8 +31,9 @@ window.FPUx = (function () {
         (r.fmin != null ? '<span class="lgm"><small>Fuel min / plan</small><b>' + r.fmin.toFixed(1) + ' / ' + r.fplan.toFixed(1) + ' t</b></span>' : '') + (r.divert && r.divert !== '-' ? '<span class="lgm"><small>Diversion</small><b>' + r.divert + '</b></span>' : '') +
         '<span class="lgact"><button type="button" class="atob" data-ato="' + i + '">set time</button></span></div></div>';
       host.appendChild(card); legs.push(card);
-      card.querySelector('.lgtog').addEventListener('click', function () { open[i] = !open[i]; paintLegs(); });
-      card.querySelector('.lgh .lgn').addEventListener('click', function () { open[i] = !open[i]; paintLegs(); });
+      function tog() { open[i] = !(open[i] != null ? open[i] : true); paintLegs(); }
+      card.querySelector('.lgtog').addEventListener('click', tog);
+      card.querySelector('.lgh .lgn').addEventListener('click', tog);
       card.querySelector('.lgpass').addEventListener('click', function (ev) { ev.stopPropagation(); C.tap(i); });
     });
     if (window.FPRefs) window.FPRefs.scan(host);
@@ -42,7 +43,7 @@ window.FPUx = (function () {
     if (!legs) return;
     var S = C.S, D = C.D, e = C.el(), nxt = S.passed + 1, ar = C.atoRow(), off = C.offMin();
     legs.forEach(function (card, i) {
-      var r = D.rows[i], passed = i <= S.passed, isNext = i === nxt, exp = open[i] != null ? open[i] : (isNext || i === nxt + 1);
+      var r = D.rows[i], passed = i <= S.passed, isNext = i === nxt, exp = open[i] != null ? open[i] : true;   /* v3.7 (pilot 10 + 11 NOV): every card open, no tap needed; the arrow only closes one */
       card.classList.toggle('passed', passed); card.classList.toggle('next', isNext); card.classList.toggle('open', exp);
       card.querySelector('.lgb').hidden = !exp; card.querySelector('.lgtog').setAttribute('aria-expanded', exp ? 'true' : 'false');
       var z = card.querySelector('.lgz'), rv = card.querySelector('.lgrv'), st = card.querySelector('.lgst'), h = '';
@@ -126,6 +127,9 @@ window.FPUx = (function () {
   function sectionBar(k) {
     var sec = $('v-' + k); if (!sec) return; var sj = sec.querySelector('.sj'); if (!sj || sj._spy) return; sj._spy = 1;
     sj.classList.add('sticky');
+    /* v3.7 (pilot 11 NOV): the bar sat inside the Brief section and scrolled away with it - make it a child of the page so it holds to the end */
+    var hs = sj.parentNode; while (hs && hs.parentNode && hs.parentNode !== sec) hs = hs.parentNode;
+    if (hs && hs !== sj && hs.parentNode === sec) sec.insertBefore(sj, hs);
     var targets = Array.prototype.map.call(sj.querySelectorAll('.sjb'), function (b) { return $(b.dataset.to); }).filter(Boolean);
     function upd() {
       var top = ($('top') ? $('top').offsetHeight : 0) + 60, cur = null;
@@ -154,7 +158,7 @@ window.FPUx = (function () {
     window.FPSheet('welcome', 'Welcome to Flight Prep 3', '<ul class="hlp wlc">' +
       '<li><b>Two groups of pages</b><span>PREPARATION (DASH, DEP, WX·NOTAM, TEM, ARR, REGS) and IN FLIGHT (NOW, WPTS, MAP, TIMERS, DIVERT). In landscape they are the rail on the left.</span></li>' +
       '<li><b>Set the take-off time</b><span>On NOW tap <b>Airborne now</b> at rotation, or type the HHMM. Every time in the app follows it.</span></li>' +
-      '<li><b>Waypoints as cards</b><span>Tap the ring when you pass a waypoint; the next leg opens with its frequencies. <b>set time</b> types the actual time over – all later times are revised (LATE / EARLY in the header).</span></li>' +
+      '<li><b>Waypoints as cards</b><span>Every waypoint card is open with its frequencies; tap the ring when you pass a waypoint. <b>set time</b> types the actual time over – all later times are revised (LATE / EARLY in the header).</span></li>' +
       '<li><b>Brief and tick</b><span>DASH shows the briefing progress; at the end of each page tap <b>Mark this page as briefed</b>.</span></li>' +
       '<li><b>Tap anything blue</b><span>Frequencies open a large board; dotted references open the document card; airfield tiles open the WX·NOTAM page.</span></li>' +
       '<li><b>Help</b><span>The ? button explains the page you are on.</span></li></ul>');

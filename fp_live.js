@@ -28,7 +28,18 @@ window.FPLive = function (D) {
   function isPlan() { return parseTO(S.to) === null; }
   function toMin() { var t = parseTO(S.to); return t === null ? F.to_plan : t; }
   // minutes after take-off; negative = take-off still ahead (up to 3 h)
-  function elReal() { var e = nowMin() - toMin(); if (e < 0) e += 1440; if (e > 1440 - 180) e -= 1440; return e; }
+  /* v3.7 (found 10 NOV 26, "CPDLC doesn't show"): the clock knew the time of day only, so on the day before - or any time outside the flight's
+     hours - the app said LANDED and hid FIR / COMMS / CPDLC. Now the flight's own date counts: before the flight it is ON GROUND with the time
+     to the planned take-off; from the next day on it is LANDED. Inside the flight's day the old rule stays (a late take-off still works). */
+  var DATE0 = (function () { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(D.date || ''); if (!m) return null; var t = Date.UTC(+m[1], +m[2] - 1, +m[3]), sm = /^(\d{1,2}):?(\d{2})$/.exec(F.std || ''), std = sm ? +sm[1] * 60 + +sm[2] : null;
+    return t + ((std != null && F.to_plan < std - 60) ? 86400000 : 0); })();   // a take-off after midnight UTC belongs to the next UTC day
+  function absMin() { return DATE0 == null ? null : (Date.now() - DATE0) / 60000 - F.to_plan; }   // minutes since the planned take-off on the flight's date
+  function elReal() {
+    var e = nowMin() - toMin(); if (e < 0) e += 1440; if (e > 1440 - 180) e -= 1440;
+    var ab = absMin();
+    if (ab != null) { if (ab < (isPlan() ? -180 : -1200)) return ab; if (isPlan() && ab > T + 1440) return T + 1; }
+    return e;
+  }
   /* v3 (user 09 NOV 26): the actual time over a waypoint (tap, or typed) revises every later time - minutes late (+) / early (-) on the plan */
   function utcMinOf(iso) { var d = new Date(iso); return d.getUTCHours() * 60 + d.getUTCMinutes() + d.getUTCSeconds() / 60; }
   function atoRow() { for (var i = S.passed; i >= 0; i--) { var r = D.rows[i]; if (S.times[i] && r && r.eet != null) return i; } return -1; }
@@ -124,6 +135,26 @@ window.FPLive = function (D) {
     }
   }
 
+  /* v3.7 (pilot 10 + 11 NOV: "comms ... not only on first"): a waypoint without its own VHF list repeats, in small, the list of the FIR entry it
+     belongs to (what each frequency is for stays with it). Written once into the row; a row that already has it is left alone. */
+  (function carryComms() {
+    var last = null, prev = null, tmp = document.createElement('div');
+    (D.rows || []).forEach(function (r) {
+      if (r.fir !== prev) { last = null; prev = r.fir; }
+      tmp.innerHTML = r.call || '';
+      if (tmp.querySelector('.cmcont')) return;
+      var v = tmp.querySelector('.cmv'), h = tmp.querySelector('.cmh');
+      if (v && !v.querySelector('.nocov')) { last = { wpt: r.wpt, v: v.outerHTML, h: h ? h.outerHTML : '' }; return; }
+      if (!last || v) return;
+      var add = '<div class="cmcont"><small class="cmfrom">Still ' + esc(r.fir) + ' – frequencies as from ' + esc(last.wpt) + '</small>' + last.v + (h ? '' : last.h) + '</div>';
+      var cm = tmp.querySelector('.cm'), dls = cm ? cm.querySelectorAll('.dl') : [];
+      if (cm) { if (dls.length) dls[dls.length - 1].insertAdjacentHTML('afterend', add); else cm.insertAdjacentHTML('afterbegin', add); r.call = tmp.innerHTML; }
+      else r.call = '<div class="cm">' + add + '</div>' + (r.call || '');
+    });
+  })();
+  /* v3.7: the frequency list each row carries itself (not the repeated one) - NOW shows the list of the row you are on, so a FIR entered twice
+     no longer shows the frequencies of its first entry */
+  var ROWVHF = (function () { var tmp = document.createElement('div'); return (D.rows || []).map(function (r) { tmp.innerHTML = r.call || ''; var own = tmp.querySelector('.cm > .cmv .cmi'); return own && !own.classList.contains('nocov') ? own.textContent.replace(/\s+/g, ' ').replace(/^\d+\s+/, '').trim() : null; }); })();
   /* ---------- waypoints table */
   var tb = document.querySelector('#wpt tbody'), nowRow, trs = [], wtab = $('wpt');
   D.rows.forEach(function (r) {
@@ -386,11 +417,19 @@ window.FPLive = function (D) {
       var hf = cm.hf || {}, ord = night === false ? ['day', 'night'] : ['night', 'day'], hfl = [];   // v2.0: one frequency per line; HF of the time of day first
       if (hf.any) hfl.push('HF ' + esc(hf.any.join(' / ')));
       else ord.forEach(function (k, i) { if (hf[k]) hfl.push((i ? '<small>' : '') + 'HF ' + (k === 'night' ? 'night / evening ' : 'day / morning ') + esc(hf[k].join(' / ')) + (i ? '</small>' : '')); });
-      var vhs = esc(cm.vhf).replace(/(\d{3}\.\d{1,3}\s*(?:N|S|E|W|NE|NW|SE|SW|East|West|North|South)?)\s+\/\s+(?=\d{3}\.\d)/g, '$1<br>');
+      var rv = null, ci = 0, R_ = D.rows || [];
+      if (e >= 0) R_.forEach(function (r, i) { if (r.eet != null && r.eet <= e + 0.5) ci = i; });
+      if (R_[ci] && R_[ci].fir === cf.fir) { for (var rj = ci; rj >= 0 && R_[rj].fir === cf.fir; rj--) if (ROWVHF[rj]) { rv = { t: ROWVHF[rj], w: R_[rj].wpt }; break; } }   // the list of this entry of the FIR
+      var vhs = esc(rv ? rv.t : cm.vhf).replace(/(\d{3}\.\d{1,3}\s*(?:N|S|E|W|NE|NW|SE|SW|East|West|North|South)?)\s+\/\s+(?=\d{3}\.\d)/g, '$1<br>');
       h += chip('COMMS', vhs + (hfl.length ? '<br>' + hfl.join('<br>') : '') + (cm.sel ? ' <small>SELCAL avail.</small>' : ''), 'com', true);
     }
     var cp = cf && D.geo && D.geo.cpdlc ? segOf(D.geo.cpdlc.segs, cf.fir) : null;
-    if (cp && e <= T) h += chip('CPDLC', cp.addr ? esc(cp.addr) + (cp.st === 'trial' ? ' <small>trial</small>' : '') : 'none', cp.addr ? 'vio' : 'mut', true);
+    /* v3.7: the CPDLC chip also names the NEXT log-on (address and latest time), on the ground too */
+    var nlg = null; (D.deadlines || []).forEach(function (d) { if (!nlg && /log-?\s?on/i.test(d.text || '') && d.eet >= Math.max(0, e) - 0.5 && !(S.done && S.done[d.id])) nlg = d; });
+    var nlt = '';
+    if (nlg) { var am = /log-?\s?on\s+([A-Z]{4})\b/i.exec(nlg.text || ''), sg = D.geo && D.geo.cpdlc ? segOf(D.geo.cpdlc.segs, nlg.fir) : null, ad = am ? am[1].toUpperCase() : (sg && sg.addr) || nlg.fir;
+      nlt = '<small class="nlg">next: log on <b>' + esc(ad) + '</b> by ' + hr(nlg.eet) + ' · ' + zr(nlg.eet) + '</small>'; }
+    if ((cp || nlt) && e <= T) h += chip('CPDLC', (cp && cp.addr ? esc(cp.addr) + (cp.st === 'trial' ? ' <small>trial</small>' : '') : 'none here') + (nlt ? '<br>' + nlt : ''), cp && cp.addr ? 'vio' : (nlt ? 'vio' : 'mut'), true);
     var sl = cf && D.geo && D.geo.slop ? segOf(D.geo.slop.segs, cf.fir) : null;
     if (sl && air) h += chip('SLOP', sl.st === 'authorized' ? '✓ right, max 2 NM' : (sl.st === 'not_authorized' ? '✗ centreline' : 'not published – centreline'), sl.st === 'authorized' ? 'grn' : (sl.st === 'not_authorized' ? 'red' : 'mut'), true);
     var g = inIfbp(eC), nx = null; IFS.forEach(function (q) { if (!nx && q.w > eC) nx = q; });

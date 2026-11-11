@@ -550,10 +550,17 @@
       '<div class="cell"><span class="lab">Fuel at ' + esc(O.dest) + '</span><span class="big">' + D.fuel.dest_plan.toFixed(1) + ' t</span><span class="sm">MIN DIV ' + D.fuel.mindiv.toFixed(2) + ' t</span></div></div>';
     h += '<div class="bar"><span>Planned descent</span><small>OFP PLND FL</small></div><p class="rt">' + esc(O.plnd_fl || '-') + '</p>';
     h += tafTable(dest, 'Destination weather', 'OFP weather section');
-    h += '<div class="bar"><span>Destination alternates</span><small>OFP</small></div><div class="tw"><table><thead><tr><th>ALTN</th><th>RWY</th><th>NM</th><th>FL</th><th>Time</th><th>Fuel</th><th>Routing</th></tr></thead><tbody>';
-    O.alts.forEach(function (a) { h += '<tr><td><b>' + esc(a.icao) + '</b></td><td>' + esc(a.rwy) + '</td><td>' + a.nm + '</td><td>' + esc(a.fl) + '</td><td>' + hm(a.min) + '</td><td>' + t1(a.kg) + '</td><td><small>' + esc(a.route) + '</small></td></tr>'; });
+    /* v3.7 (pilot 10 NOV: "put alt and alt weather next to each other not under each other"): one row per alternate - its data on the left, its own
+       METAR / TAF on the right */
+    h += '<div class="bar"><span>Destination alternates and their weather</span><small>OFP</small></div><div class="tw"><table class="altwx"><thead><tr><th>ALTN</th><th>RWY · NM · FL · time · fuel</th><th>METAR / TAF of this alternate (from the OFP)</th></tr></thead><tbody>';
+    var altSeen = {};
+    O.alts.forEach(function (a) {
+      var w = altn.filter(function (x) { return x.icao === a.icao; })[0]; altSeen[a.icao] = 1;
+      h += '<tr><td><b>' + esc(a.icao) + '</b>' + (w && w.name ? '<br><small>' + esc(w.name) + '</small>' : '') + '</td><td>RWY <b>' + esc(a.rwy) + '</b> · ' + a.nm + ' NM · FL' + esc(a.fl) + '<br><b>' + hm(a.min) + '</b> · ' + t1(a.kg) + '<br><small>' + esc(a.route) + '</small></td><td>' +
+        (w ? (w.metar ? '<b>METAR</b> ' + esc(w.metar) + '<br>' : '') + (w.taf ? '<b>TAF</b> ' + esc(w.taf) : '') : '<small>no weather for this alternate in the OFP</small>') + '</td></tr>';
+    });
     h += '</tbody></table></div>';
-    h += tafTable(altn, 'Alternate weather', 'OFP weather section');
+    h += tafTable(altn.filter(function (x) { return !altSeen[x.icao]; }), 'Alternate weather', 'OFP weather section');
     h += ntBlock(nt('DEST'), 'Destination NOTAMs') + ntBlock(nt('ALTN'), 'Alternate NOTAMs');
     V.arr = h;
 
